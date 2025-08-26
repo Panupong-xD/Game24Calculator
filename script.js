@@ -1,4 +1,3 @@
-// Core variables
 let operatorFlags = {};
 let useIntegerMode = false;
 let MAX_SQRT_DEPTH = 2;
@@ -267,7 +266,7 @@ self.onmessage = function(e) {
       self.postMessage({ 
         results, 
         closest: closestResult 
-          || null // ถ้าไม่มี expression ที่ใช้เลขครบ ให้ closestResult เป็น null
+          || null
       });
     } catch (error) {
       self.postMessage({ 
@@ -281,4 +280,5 @@ self.onmessage = function(e) {
     calculationCache.clear();
     expressionCache.clear();
   }
+
 };
