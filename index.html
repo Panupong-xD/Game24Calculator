@@ -1,0 +1,765 @@
+<!DOCTYPE html>
+<html lang="th">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ตัวเลขและผลลัพธ์ที่เป็นไปได้</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- Navigation -->
+    <div class="nav-container">
+      <div class="nav-buttons">
+        <div class="nav-btn active" onclick="showPage('calculation-page')">การคำนวณ</div>
+        <div class="nav-btn" onclick="showPage('settings-page')">การตั้งค่า</div>
+      </div>
+      <!-- เพิ่มปุ่ม toggle ธีม -->
+      <div class="theme-toggle" onclick="toggleTheme()"></div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-container">
+      <!-- Calculation Page -->
+      <div id="calculation-page" class="page active">
+        <div class="container">
+          <h1>คำนวณผลลัพธ์ที่เป็นไปได้</h1>
+          <p>กรอกตัวเลขและผลลัพธ์ที่ต้องการคำนวณ</p>
+          <div id="numbers" class="number-container"></div>
+          <button class="add-btn" onclick="addNumber()">+</button>
+          <button class="remove-btn" onclick="removeNumber()">-</button>
+          <br />
+          <input
+            type="number"
+            id="target"
+            placeholder="ผลลัพธ์"
+            class="easy-input"
+          />
+          <br />
+          <button class="calc-btn" onclick="findSolutions()">ค้นหาคำตอบ</button>
+          <div id="results"></div>
+        </div>
+      </div>
+
+      <!-- Updated Settings Page -->
+      <div id="settings-page" class="page">
+        <div class="container">
+          <h1>การตั้งค่า</h1>
+          <p>ปรับแต่งการทำงานของเครื่องมือคำนวณ</p>
+          
+          <div class="settings-options">
+            <div class="option-group">
+              <h3>ตัวเลือกการคำนวณ</h3>
+              <div class="operator-buttons">
+                <button id="toggleAddBtn" class="toggle-btn" onclick="toggleOperator('+')">เปิดการใช้ +</button>
+                <button id="toggleSubBtn" class="toggle-btn" onclick="toggleOperator('-')">เปิดการใช้ -</button>
+                <button id="toggleMulBtn" class="toggle-btn" onclick="toggleOperator('*')">เปิดการใช้ *</button>
+                <button id="toggleDivBtn" class="toggle-btn" onclick="toggleOperator('/')">เปิดการใช้ /</button>
+                <button id="toggleModBtn" class="toggle-btn" onclick="toggleOperator('%')">เปิดการใช้ %</button>
+                <button id="togglePowBtn" class="toggle-btn" onclick="toggleOperator('^')">เปิดการใช้ ^</button>
+                <button id="toggleSqrtBtn" class="toggle-btn" onclick="toggleOperator('√')">เปิดการใช้ √</button>
+                <div id="sqrt-depth-container" class="sqrt-depth-container">
+                  <label for="sqrt-depth">ระดับการซ้อน √ สูงสุด: </label>
+                  <input
+                    type="number"
+                    id="sqrt-depth"
+                    class="sqrt-depth-input"
+                    min="1"
+                    value="2"
+                    onchange="updateMaxSqrtDepth()"
+                  />
+                </div>
+                <button id="toggleFactBtn" class="toggle-btn" onclick="toggleOperator('!')">เปิดการใช้ !</button>
+                <div id="fact-depth-container" class="fact-depth-container" style="display:none;">
+                  <label for="fact-depth">ระดับการซ้อน ! สูงสุด: </label>
+                  <input
+                    type="number"
+                    id="fact-depth"
+                    class="fact-depth-input"
+                    min="1"
+                    value="1"
+                    onchange="updateMaxFactDepth()"
+                  />
+                </div>
+              </div>
+              <button
+                id="toggleFastModeBtn"
+                onclick="toggleFastMode()"
+                class="toggle-btn"
+              >
+                เปิดโหมดหาคำตอบเร็ว
+              </button>
+              <button
+                id="toggleIntegerModeBtn"
+                onclick="toggleIntegerMode()"
+                class="toggle-btn"
+              >
+                เปิดโหมดจำนวนเต็ม
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- JavaScript -->
+    <script>
+// Page Navigation
+function showPage(pageId) {
+  document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+  document.getElementById(pageId).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+  event.target.classList.add('active');
+}
+
+// Core variables
+let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false };
+let useFastMode = false;
+let useIntegerMode = false;
+let isCalculating = false;
+let cancelCalculation = false;
+let activeWorkers = [];
+let MAX_SQRT_DEPTH = 2;
+let MAX_FACT_DEPTH = 1;
+const MAX_FACTORIAL_INPUT = 10;
+const MAX_RESULTS = 100;
+const CHUNK_SIZE = 20;
+
+const factorialCache = new Map();
+const calculationCache = new Map();
+const expressionCache = new Map();
+
+// UI Control Functions
+document.body.classList.add('light-theme');
+
+function toggleTheme() {
+  document.body.classList.toggle('light-theme');
+  document.body.classList.toggle('dark-theme');
+}
+
+function toggleOperator(op) {
+  operatorFlags[op] = !operatorFlags[op];
+  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : 'Fact'}Btn`);
+  if (operatorFlags[op]) {
+    btn.textContent = `ปิดการใช้ ${op}`;
+    btn.classList.add('active');
+    if (op === '√') document.getElementById("sqrt-depth-container").classList.add("active");
+    if (op === '!') document.getElementById("fact-depth-container").style.display = "block";
+  } else {
+    btn.textContent = `เปิดการใช้ ${op}`;
+    btn.classList.remove('active');
+    if (op === '√') document.getElementById("sqrt-depth-container").classList.remove("active");
+    if (op === '!') document.getElementById("fact-depth-container").style.display = "none";
+  }
+}
+
+document.getElementById("toggleAddBtn").classList.add('active');
+document.getElementById("toggleSubBtn").classList.add('active');
+document.getElementById("toggleMulBtn").classList.add('active');
+document.getElementById("toggleDivBtn").classList.add('active');
+
+function toggleFastMode() {
+  useFastMode = !useFastMode;
+  const btn = document.getElementById("toggleFastModeBtn");
+  if (useFastMode) {
+    btn.textContent = "ปิดโหมดหาคำตอบเร็ว";
+    btn.style.background = "linear-gradient(45deg, #e74c3c, #c0392b)";
+  } else {
+    btn.textContent = "เปิดโหมดหาคำตอบเร็ว";
+    btn.style.background = "linear-gradient(45deg, #95a5a6, #7f8c8d)";
+  }
+}
+
+function toggleIntegerMode() {
+  useIntegerMode = !useIntegerMode;
+  const btn = document.getElementById("toggleIntegerModeBtn");
+  if (useIntegerMode) {
+    btn.textContent = "ปิดโหมดจำนวนเต็ม";
+    btn.style.background = "linear-gradient(45deg, #e67e22, #d35400)";
+  } else {
+    btn.textContent = "เปิดโหมดจำนวนเต็ม";
+    btn.style.background = "linear-gradient(45deg, #95a5a6, #7f8c8d)";
+  }
+}
+
+function updateMaxSqrtDepth() {
+  const input = document.getElementById("sqrt-depth");
+  const value = parseInt(input.value);
+  if (!isNaN(value) && value >= 1) MAX_SQRT_DEPTH = value;
+  else input.value = MAX_SQRT_DEPTH;
+}
+
+function updateMaxFactDepth() {
+  const input = document.getElementById("fact-depth");
+  const value = parseInt(input.value);
+  if (!isNaN(value) && value >= 1) MAX_FACT_DEPTH = value;
+  else input.value = MAX_FACT_DEPTH;
+}
+
+function addNumber() {
+  let numbers = document.querySelectorAll(".num-container");
+  if (numbers.length < 8) {
+    let div = document.createElement("div");
+    div.className = "num-container";
+    let input = document.createElement("input");
+    input.type = "number";
+    input.className = "num";
+    input.placeholder = "0";
+    div.appendChild(input);
+    document.getElementById("numbers").appendChild(div);
+  }
+}
+
+function removeNumber() {
+  let numbers = document.getElementById("numbers");
+  if (numbers.children.length > 1) numbers.removeChild(numbers.lastChild);
+}
+
+// Basic Calculation Functions
+function factorial(n) {
+  if (n < 0 || n > MAX_FACTORIAL_INPUT || !Number.isInteger(n)) return NaN;
+  if (n === 0 || n === 1) return 1;
+  if (factorialCache.has(n)) return factorialCache.get(n);
+  let result = 1;
+  for (let i = 2; i <= n; i++) result *= i;
+  factorialCache.set(n, result);
+  return result;
+}
+
+function evaluateAST(node) {
+  if (node.type === "num") return node.value;
+  let leftVal = node.left ? evaluateAST(node.left) : null;
+  let rightVal = evaluateAST(node.right);
+  const cacheKey = `${node.operator}|${leftVal}|${rightVal}`;
+  if (calculationCache.has(cacheKey)) return calculationCache.get(cacheKey);
+  let result;
+  switch (node.operator) {
+    case "+": result = operatorFlags['+'] ? leftVal + rightVal : NaN; break;
+    case "-": result = operatorFlags['-'] ? leftVal - rightVal : NaN; break;
+    case "*": result = operatorFlags['*'] ? leftVal * rightVal : NaN; break;
+    case "/": result = operatorFlags['/'] && rightVal !== 0 ? leftVal / rightVal : NaN; break;
+    case "%":
+      if (!operatorFlags['%'] || rightVal === 0) return NaN;
+      result = leftVal - rightVal * Math.floor(leftVal / rightVal);
+      break;
+    case "^":
+      if (!operatorFlags['^']) return NaN;
+      result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : Math.pow(leftVal, rightVal);
+      break;
+    case "√": result = operatorFlags['√'] && rightVal >= 0 ? Math.sqrt(rightVal) : NaN; break;
+    case "!": result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? factorial(rightVal) : NaN; break;
+    default: return NaN;
+  }
+  if (!isNaN(result)) {
+    if (calculationCache.size > 1000000) calculationCache.clear();
+    calculationCache.set(cacheKey, result);
+  }
+  return result;
+}
+
+function isIntegerResult(result) {
+  return Number.isInteger(result) || Math.abs(result - Math.round(result)) < 0.0001;
+}
+
+function serializeAST(node) {
+  if (node.type === "num") return node.value.toString();
+  if (node.operator === "√") return `√(${serializeAST(node.right)})`;
+  if (node.operator === "!") return `(${serializeAST(node.right)})!`;
+  return `(${node.left ? serializeAST(node.left) : ""} ${node.operator} ${serializeAST(node.right)})`;
+}
+
+function canonicalizeAST(node) {
+  if (node.type === "num") return node;
+  let left = node.left ? canonicalizeAST(node.left) : null;
+  let right = canonicalizeAST(node.right);
+  if (node.operator === "+" || node.operator === "*" || node.operator === "%") {
+    let leftStr = serializeAST(left);
+    let rightStr = serializeAST(right);
+    if (leftStr > rightStr) return { type: "op", operator: node.operator, left: right, right: left };
+  }
+  return { type: "op", operator: node.operator, left, right };
+}
+
+function getSqrtDepth(node) {
+  if (node.type === "num") return 0;
+  if (node.operator === "√") return 1 + getSqrtDepth(node.right);
+  let leftDepth = node.left ? getSqrtDepth(node.left) : 0;
+  let rightDepth = node.right ? getSqrtDepth(node.right) : 0;
+  return Math.max(leftDepth, rightDepth);
+}
+
+function getFactDepth(node) {
+  if (node.type === "num") return 0;
+  if (node.operator === "!") return 1 + getFactDepth(node.right);
+  let leftDepth = node.left ? getFactDepth(node.left) : 0;
+  let rightDepth = node.right ? getFactDepth(node.right) : 0;
+  return Math.max(leftDepth, rightDepth);
+}
+
+function generateAllGroupings(nums, target) {
+  const memoized = new Map();
+  function generateGroupingsHelper(start, end) {
+    const key = `${start}-${end}`;
+    if (memoized.has(key)) return memoized.get(key);
+    const result = [];
+    if (start === end) {
+      const numNode = { type: "num", value: nums[start] };
+      result.push(numNode);
+      if (operatorFlags['√'] && nums[start] >= 0 && (!useIntegerMode || Number.isInteger(Math.sqrt(nums[start])))) {
+        let currentExpr = numNode;
+        for (let i = 1; i <= MAX_SQRT_DEPTH && operatorFlags['√']; i++) {
+          currentExpr = { type: "op", operator: "√", left: null, right: currentExpr };
+          const sqrtResult = evaluateAST(currentExpr);
+          if (!isNaN(sqrtResult) && (!useIntegerMode || isIntegerResult(sqrtResult))) result.push(currentExpr);
+        }
+      }
+      if (operatorFlags['!'] && nums[start] >= 0 && nums[start] <= MAX_FACTORIAL_INPUT && Number.isInteger(nums[start])) {
+        let currentExpr = numNode;
+        for (let i = 1; i <= MAX_FACT_DEPTH && operatorFlags['!']; i++) {
+          currentExpr = { type: "op", operator: "!", left: null, right: currentExpr };
+          const factResult = evaluateAST(currentExpr);
+          if (!isNaN(factResult)) result.push(currentExpr);
+        }
+      }
+    } else {
+      for (let i = start; i < end; i++) {
+        const leftExprs = generateGroupingsHelper(start, i);
+        const rightExprs = generateGroupingsHelper(i + 1, end);
+        for (const left of leftExprs) {
+          for (const right of rightExprs) {
+            const operators = [];
+            if (operatorFlags['+']) operators.push("+");
+            if (operatorFlags['-']) operators.push("-");
+            if (operatorFlags['*']) operators.push("*");
+            if (operatorFlags['/']) operators.push("/");
+            if (operatorFlags['%']) operators.push("%");
+            if (operatorFlags['^']) operators.push("^");
+            for (const op of operators) {
+              if (op === "/" && evaluateAST(right) === 0) continue;
+              if (op === "%" && evaluateAST(right) === 0) continue;
+              if (op === "^" && evaluateAST(left) === 0 && evaluateAST(right) <= 0) continue;
+              const newExpr = { type: "op", operator: op, left, right };
+              const resultVal = evaluateAST(newExpr);
+              if (isNaN(resultVal)) continue;
+
+              if (Math.abs(resultVal - target) > 10000) continue;
+
+              if (!useIntegerMode || isIntegerResult(resultVal)) {
+                result.push(newExpr);
+                if (operatorFlags['√'] && getSqrtDepth(newExpr) < MAX_SQRT_DEPTH) {
+                  const sqrtValue = evaluateAST(newExpr);
+                  if (!isNaN(sqrtValue) && sqrtValue >= 0) {
+                    let currentExpr = newExpr;
+                    for (let depth = 1; depth <= MAX_SQRT_DEPTH - getSqrtDepth(newExpr); depth++) {
+                      currentExpr = { type: "op", operator: "√", left: null, right: currentExpr };
+                      const sqrtResult = evaluateAST(currentExpr);
+                      if (!isNaN(sqrtResult) && (!useIntegerMode || isIntegerResult(sqrtResult))) {
+                        result.push(currentExpr);
+                      }
+                    }
+                  }
+                }
+                if (operatorFlags['!'] && getFactDepth(newExpr) < MAX_FACT_DEPTH) {
+                  const factValue = evaluateAST(newExpr);
+                  if (!isNaN(factValue) && factValue >= 0 && factValue <= MAX_FACTORIAL_INPUT && Number.isInteger(factValue)) {
+                    let currentExpr = newExpr;
+                    for (let depth = 1; depth <= MAX_FACT_DEPTH - getFactDepth(newExpr); depth++) {
+                      currentExpr = { type: "op", operator: "!", left: null, right: currentExpr };
+                      const factResult = evaluateAST(currentExpr);
+                      if (!isNaN(factResult)) result.push(currentExpr);
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    memoized.set(key, result);
+    return result;
+  }
+  return generateGroupingsHelper(0, nums.length - 1);
+}
+
+function findSolutions() {
+  if (isCalculating) return;
+  isCalculating = true;
+  cancelCalculation = false;
+  activeWorkers = [];
+
+  const numContainers = document.querySelectorAll(".num-container");
+  const nums = Array.from(numContainers).map(container => parseInt(container.querySelector(".num").value) || 0);
+  const target = parseInt(document.getElementById("target").value);
+
+  if (isNaN(target)) {
+    document.getElementById("results").innerHTML = "<h2>กรุณากรอกผลลัพธ์ที่ต้องการ</h2>";
+    isCalculating = false;
+    return;
+  }
+  if (nums.length < 2) {
+    document.getElementById("results").innerHTML = "<h2>กรุณาใส่ตัวเลขอย่างน้อย 2 ตัว</h2>";
+    isCalculating = false;
+    return;
+  }
+
+  document.getElementById("results").innerHTML = `
+    <h2>กำลังเรียงสับเปลี่ยน...</h2>
+    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
+  `;
+
+  if (useFastMode) findFirstSolutionFast(nums, target);
+  else findAllSolutionsParallel(nums, target);
+}
+
+function findFirstSolutionFast(nums, target) {
+  const numWorkers = navigator.hardwareConcurrency || 4;
+  const workers = [];
+  let found = false;
+
+  calculationCache.clear();
+  expressionCache.clear();
+
+  const workerPromises = [];
+  for (let i = 0; i < numWorkers; i++) {
+    const worker = new Worker('worker.js');
+    workers.push(worker);
+    activeWorkers.push(worker);
+
+    const promise = new Promise((resolve) => {
+      worker.onmessage = function(e) {
+        if (e.data.found && !found) {
+          found = true;
+          const { expression, result } = e.data;
+          document.getElementById("results").innerHTML = `<h2>ผลลัพธ์:</h2><ul><li>${expression} = ${result}</li></ul>`;
+          terminateWorkers(workers);
+          activeWorkers = [];
+          isCalculating = false;
+        }
+        resolve();
+      };
+
+      worker.onerror = function(err) {
+        document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
+        resolve();
+      };
+    });
+
+    workerPromises.push(promise);
+
+    worker.postMessage({
+      type: 'findFirstFast',
+      nums,
+      target,
+      operatorFlags,
+      useIntegerMode,
+      MAX_SQRT_DEPTH,
+      MAX_FACT_DEPTH,
+      MAX_FACTORIAL_INPUT
+    });
+  }
+
+  Promise.all(workerPromises).then(() => {
+    if (!found) document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ต้องการ</h2>";
+    terminateWorkers(workers);
+    activeWorkers = [];
+    isCalculating = false;
+  }).catch((error) => {
+    document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
+    terminateWorkers(workers);
+    activeWorkers = [];
+    isCalculating = false;
+  });
+}
+
+function cancelAllWorkers() {
+  activeWorkers.forEach(worker => worker.terminate());
+  activeWorkers = [];
+  if (isCalculating) {
+    isCalculating = false;
+    // แสดงผลลัพธ์ที่ใกล้เคียงที่สุด ณ เวลานั้น
+    if (window.closestResultOnCancel) {
+      if (Math.abs(window.closestResultOnCancel.diff) < 0.0001) {
+        document.getElementById("results").innerHTML = `
+          <h2>การคำนวณถูกยกเลิก</h2>
+          <h3>พบคำตอบที่ตรงเป๊ะ:</h3>
+          <ul><li>${window.closestResultOnCancel.expression} = ${window.closestResultOnCancel.result}</li></ul>
+        `;
+      } else {
+        document.getElementById("results").innerHTML = `
+          <h2>การคำนวณถูกยกเลิก</h2>
+          <h3>คำตอบที่ใกล้เคียงที่สุด:</h3>
+          <ul><li>${window.closestResultOnCancel.expression} = ${window.closestResultOnCancel.result} (ห่างจากเป้าหมาย ${window.closestResultOnCancel.diff.toFixed(4)})</li></ul>
+        `;
+      }
+    } else {
+      document.getElementById("results").innerHTML = `<h2>การคำนวณถูกยกเลิก: ไม่พบคำตอบใดๆ</h2>`;
+    }
+  }
+}
+
+function findAllSolutionsParallel(nums, target) {
+  document.getElementById("results").innerHTML = `
+    <h2>กำลังเรียงสับเปลี่ยน...</h2>
+    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
+  `;
+
+  const permutations = permute(nums);
+  let results = [];
+  let expressionSet = new Set();
+  let closestResult = null;
+  let smallestDiff = Infinity;
+  let processedPerms = 0;
+  const totalPerms = permutations.length;
+
+  calculationCache.clear();
+  expressionCache.clear();
+
+  if (permutations.length === 0) {
+    document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบใดๆ</h2>";
+    isCalculating = false;
+    return;
+  }
+
+  document.getElementById("results").innerHTML = `
+    <h2>กำลังคำนวณ... 0% (0/${totalPerms})</h2>
+    <p>ผลลัพธ์ที่ใกล้เคียงที่สุด: ยังไม่พบ</p>
+    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
+  `;
+
+  const chunkSize = CHUNK_SIZE;
+  let currentIndex = 0;
+
+  function processNextChunk() {
+    if (cancelCalculation) {
+      cancelAllWorkers();
+      return;
+    }
+
+    const start = currentIndex;
+    const end = Math.min(currentIndex + chunkSize, permutations.length);
+    const chunk = permutations.slice(start, end);
+
+    const worker = new Worker('worker.js');
+    activeWorkers.push(worker);
+
+    worker.onmessage = function(e) {
+      if (e.data.progress) {
+        processedPerms = start + e.data.processed;
+        updateProgress(processedPerms, totalPerms, target, results, e.data.closest || closestResult);
+        if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
+          smallestDiff = e.data.closest.diff;
+          closestResult = e.data.closest;
+          window.closestResultOnCancel = closestResult; // เก็บไว้สำหรับ cancel
+        }
+        return;
+      }
+
+      processedPerms += chunk.length;
+      updateProgress(processedPerms, totalPerms, target, results, closestResult);
+
+      const workerResults = e.data.results || [];
+      workerResults.forEach(res => {
+        if (!expressionSet.has(res.expression)) {
+          expressionSet.add(res.expression);
+          results.push(res);
+        }
+      });
+
+      const workerClosest = e.data.closest;
+      if (workerClosest && workerClosest.diff !== undefined && !isNaN(workerClosest.diff)) {
+        if (Math.abs(workerClosest.diff) < smallestDiff) {
+          smallestDiff = Math.abs(workerClosest.diff);
+          closestResult = workerClosest;
+          window.closestResultOnCancel = closestResult; // เก็บไว้สำหรับ cancel
+          updateProgress(processedPerms, totalPerms, target, results, closestResult);
+        }
+      }
+
+      worker.terminate();
+      activeWorkers = activeWorkers.filter(w => w !== worker);
+
+      if (processedPerms % 100 === 0) {
+        calculationCache.clear();
+        expressionCache.clear();
+      }
+
+      currentIndex += chunkSize;
+      if (currentIndex < permutations.length) {
+        setTimeout(processNextChunk, 0);
+      } else {
+        if (results.length > 0) {
+          displayResults(results);
+        } else if (closestResult) {
+          if (Math.abs(closestResult.diff) < 0.0001) {
+            document.getElementById("results").innerHTML = `
+              <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
+              <ul><li>${closestResult.expression} = ${closestResult.result}</li></ul>
+            `;
+          } else {
+            const diff = Math.abs(closestResult.result - target).toFixed(4);
+            document.getElementById("results").innerHTML = `
+              <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
+              <ul><li>${closestResult.expression} = ${closestResult.result} (ห่างจากเป้าหมาย ${diff})</li></ul>
+            `;
+          }
+        } else {
+          document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
+        }
+        activeWorkers = [];
+        isCalculating = false;
+      }
+    };
+
+    worker.onerror = function(err) {
+      worker.terminate();
+      activeWorkers = activeWorkers.filter(w => w !== worker);
+      document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
+      isCalculating = false;
+    };
+
+    worker.postMessage({
+      type: 'findAll',
+      chunk,
+      target,
+      nums,
+      operatorFlags,
+      useIntegerMode,
+      MAX_SQRT_DEPTH,
+      MAX_FACT_DEPTH,
+      MAX_FACTORIAL_INPUT,
+      MAX_RESULTS: Infinity
+    });
+  }
+
+  processNextChunk();
+}
+
+function permute(arr) {
+  const seen = new Set();
+  const permutations = [];
+  const c = new Array(arr.length).fill(0);
+  let i = 1;
+  const initial = arr.slice();
+  const key = initial.join(",");
+  seen.add(key);
+  permutations.push(initial);
+  while (i < arr.length) {
+    if (c[i] < i) {
+      const swapIndex = i % 2 ? c[i] : 0;
+      [arr[swapIndex], arr[i]] = [arr[i], arr[swapIndex]];
+      const key = arr.join(",");
+      if (!seen.has(key)) {
+        seen.add(key);
+        permutations.push(arr.slice());
+      }
+      c[i]++;
+      i = 1;
+    } else {
+      c[i] = 0;
+      i++;
+    }
+  }
+  return permutations;
+}
+
+function terminateWorkers(workers) {
+  workers.forEach(worker => worker.terminate());
+}
+
+function usesAllNumbers(ast, originalNums) {
+  const numbers = [];
+  function extractNumbers(node) {
+    if (node.type === "num") numbers.push(node.value);
+    if (node.left) extractNumbers(node.left);
+    if (node.right) extractNumbers(node.right);
+  }
+  extractNumbers(ast);
+  if (numbers.length !== originalNums.length) return false;
+  const sortedUsed = [...numbers].sort((a, b) => a - b);
+  const sortedOriginal = [...originalNums].sort((a, b) => a - b);
+  return sortedUsed.every((val, i) => val === sortedOriginal[i]);
+}
+
+function respectsLockOrder(ast, originalNums, lockedIndices) {
+  const numberPositions = [];
+  function extractPositions(node, position = []) {
+    if (node.type === "num") numberPositions.push({ value: node.value, position: [...position] });
+    if (node.left) extractPositions(node.left, [...position, 'left']);
+    if (node.right) extractPositions(node.right, [...position, 'right']);
+  }
+  extractPositions(ast);
+
+  const originalPositions = new Map();
+  originalNums.forEach((num, index) => originalPositions.set(index, num));
+
+  for (const lockedIndex of lockedIndices) {
+    const lockedNum = originalNums[lockedIndex];
+    const lockedPosInAST = numberPositions.find(np => np.value === lockedNum);
+    if (!lockedPosInAST) return false;
+
+    const allPositions = numberPositions.map(np => np.position.length);
+    const maxDepth = Math.max(...allPositions);
+    const lockedDepth = lockedPosInAST.position.length;
+
+    if (lockedIndex === originalNums.length - 1) {
+      if (lockedDepth !== maxDepth || numberPositions.filter(np => np.position.length === maxDepth).length > 1) return false;
+    } else if (lockedIndex === 0) {
+      if (lockedDepth !== 0) return false;
+    } else {
+      const beforeLocked = originalNums.slice(0, lockedIndex);
+      const afterLocked = originalNums.slice(lockedIndex + 1);
+      const beforeCount = numberPositions.filter(np => beforeLocked.includes(np.value) && np.position.length < lockedDepth).length;
+      const afterCount = numberPositions.filter(np => afterLocked.includes(np.value) && np.position.length > lockedDepth).length;
+      if (beforeCount !== beforeLocked.length || afterCount !== afterLocked.length) return false;
+    }
+  }
+  return true;
+}
+
+function updateProgress(processed, total, target, results, closestResult) {
+  const percent = Math.round((processed / total) * 100);
+  let closestText = "ยังไม่พบ";
+  if (closestResult) {
+    // ปรับ logic: ถ้า diff == 0 ให้แสดงว่า "พบคำตอบที่ตรงเป้าหมาย"
+    if (Math.abs(closestResult.diff) < 0.0001) {
+      closestText = `${closestResult.expression} = ${closestResult.result} (ตรงเป๊ะ)`;
+    } else {
+      closestText = `${closestResult.expression} = ${closestResult.result} (ห่างจากเป้าหมาย ${closestResult.diff.toFixed(4)})`;
+    }
+  }
+  document.getElementById("results").innerHTML = `
+    <h2>กำลังคำนวณ... ${percent}% (${processed}/${total})</h2>
+    <p>ผลลัพธ์ที่ใกล้เคียงที่สุด: ${closestText}</p>
+    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
+  `;
+}
+
+function displayResults(results) {
+  if (results.length > 0) {
+    document.getElementById("results").innerHTML =
+      `<h2>ผลลัพธ์ (${results.length} รายการ):</h2><ul>` +
+      results.map((res) => `<li>${res.expression} = ${res.result}</li>`).join("") +
+      `</ul>`;
+  } else if (window.closestResultOnCancel) {
+    const target = parseInt(document.getElementById("target").value);
+    const diff = Math.abs(window.closestResultOnCancel.result - target).toFixed(4);
+    document.getElementById("results").innerHTML = `
+      <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
+      <ul><li>${window.closestResultOnCancel.expression} = ${window.closestResultOnCancel.result} (ห่างจากเป้าหมาย ${diff})</li></ul>
+    `;
+  } else {
+    document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
+  }
+}
+
+// Initialize
+addNumber();
+
+// Set initial button states
+document.getElementById("toggleAddBtn").textContent = "ปิดการใช้ +";
+document.getElementById("toggleSubBtn").textContent = "ปิดการใช้ -";
+document.getElementById("toggleMulBtn").textContent = "ปิดการใช้ *";
+document.getElementById("toggleDivBtn").textContent = "ปิดการใช้ /";
+    </script>
+  <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'92c9ab9d28d2fe85',t:'MTc0NDAzMDQzMy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv=params={r:'92d0b45d6972ce5f',t:'MTc0NDEwNDE5MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'92d1fc79acdffdfd',t:'MTc0NDExNzYzMS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>
