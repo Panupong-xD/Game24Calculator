@@ -189,6 +189,108 @@ function usesAllNumbers(ast, originalNums) {
   return sortedUsed.every((val, i) => val === sortedOriginal[i]);
 }
 
+function dfsFindClosest(nums, target, used, exprs, closest) {
+  let n = nums.length;
+  let found = null;
+
+  function dfs(currentNums, currentExprs) {
+    if (currentNums.length === 1) {
+      const result = currentNums[0];
+      const expr = currentExprs[0];
+      const diff = Math.abs(result - target);
+      if (diff < 0.0001) {
+        found = { expression: serializeAST(expr), result, diff, isExact: true };
+        return true;
+      }
+      if (!closest.value || diff < closest.value.diff) {
+        closest.value = { expression: serializeAST(expr), result, diff, isExact: false };
+      }
+      return false;
+    }
+
+    for (let i = 0; i < currentNums.length; i++) {
+      for (let j = 0; j < currentNums.length; j++) {
+        if (i === j) continue;
+        let nextNums = [];
+        let nextExprs = [];
+        for (let k = 0; k < currentNums.length; k++) {
+          if (k !== i && k !== j) {
+            nextNums.push(currentNums[k]);
+            nextExprs.push(currentExprs[k]);
+          }
+        }
+        // ลองทุก operator
+        const a = currentNums[i], b = currentNums[j];
+        const exprA = currentExprs[i], exprB = currentExprs[j];
+        const ops = [];
+        if (operatorFlags['+']) ops.push("+");
+        if (operatorFlags['-']) ops.push("-");
+        if (operatorFlags['*']) ops.push("*");
+        if (operatorFlags['/']) ops.push("/");
+        if (operatorFlags['%']) ops.push("%");
+        if (operatorFlags['^']) ops.push("^");
+        for (const op of ops) {
+          // ป้องกัน division/mod by zero, pow 0^neg
+          if ((op === "/" || op === "%") && Math.abs(b) < 1e-8) continue;
+          if (op === "^" && a === 0 && b <= 0) continue;
+          let val;
+          switch (op) {
+            case "+": val = a + b; break;
+            case "-": val = a - b; break;
+            case "*": val = a * b; break;
+            case "/": val = a / b; break;
+            case "%": val = a - b * Math.floor(a / b); break;
+            case "^": val = Math.pow(a, b); break;
+          }
+          if (isNaN(val) || !isFinite(val)) continue;
+          if (useIntegerMode && !isIntegerResult(val)) continue;
+
+          // สร้าง AST
+          const ast = { type: "op", operator: op, left: exprA, right: exprB };
+          // ลอง sqrt/fact ต่อท้าย (ถ้าเปิด)
+          let astVariants = [ast];
+          // sqrt
+          if (operatorFlags['√'] && val >= 0 && MAX_SQRT_DEPTH > 0) {
+            let sqrtVal = val, sqrtAst = ast, sqrtDepth = 0;
+            while (sqrtDepth < MAX_SQRT_DEPTH) {
+              sqrtVal = Math.sqrt(sqrtVal);
+              if (isNaN(sqrtVal) || !isFinite(sqrtVal)) break;
+              if (useIntegerMode && !isIntegerResult(sqrtVal)) break;
+              sqrtAst = { type: "op", operator: "√", left: null, right: sqrtAst };
+              astVariants.push(sqrtAst);
+              sqrtDepth++;
+            }
+          }
+          // fact
+          if (operatorFlags['!'] && val >= 0 && val <= MAX_FACTORIAL_INPUT && Number.isInteger(val) && MAX_FACT_DEPTH > 0) {
+            let factVal = val, factAst = ast, factDepth = 0;
+            while (factDepth < MAX_FACT_DEPTH) {
+              factVal = factorial(factVal);
+              if (isNaN(factVal) || !isFinite(factVal)) break;
+              factAst = { type: "op", operator: "!", left: null, right: factAst };
+              astVariants.push(factAst);
+              factDepth++;
+            }
+          }
+          // ลูปทุก variant
+          for (const astV of astVariants) {
+            let valV = evaluateAST(astV);
+            if (isNaN(valV) || !isFinite(valV)) continue;
+            if (useIntegerMode && !isIntegerResult(valV)) continue;
+            let nextNums2 = nextNums.concat([valV]);
+            let nextExprs2 = nextExprs.concat([astV]);
+            if (dfs(nextNums2, nextExprs2)) return true;
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  dfs(nums, exprs);
+  return found;
+}
+
 self.onmessage = function(e) {
   const data = e.data;
   operatorFlags = data.operatorFlags;
@@ -201,22 +303,20 @@ self.onmessage = function(e) {
   if (data.type === 'findFirstFast') {
     const { nums, target } = data;
     calculationCache.clear();
-    let attempts = 0;
-    const maxAttempts = 1000000;
-
-    while (attempts < maxAttempts) {
-      attempts++;
-      const ast = randomExpression(nums, target);
-      const result = evaluateAST(ast);
-      if (!isNaN(result) && Math.abs(result - target) < 0.0001 && usesAllNumbers(ast, nums)) {
-        const canonicalAST = canonicalizeAST(ast);
-        const canonicalStr = serializeAST(canonicalAST);
-        self.postMessage({ found: true, expression: canonicalStr, result });
-        return;
-      }
-      if (attempts % 1000 === 0) self.postMessage({ found: false, progress: attempts });
+    // ใช้ DFS แบบ backtracking
+    let closest = { value: null };
+    let found = dfsFindClosest(nums, target, [], nums.map(n => ({ type: "num", value: n })), closest);
+    if (found) {
+      self.postMessage({ found: true, expression: found.expression, result: found.result });
+      return;
     }
-    self.postMessage({ found: false, finished: true });
+    // ถ้าไม่เจอเป๊ะ ส่งใกล้เคียงที่สุด
+    if (closest.value) {
+      self.postMessage({ found: false, closest: closest.value });
+    } else {
+      self.postMessage({ found: false, finished: true });
+    }
+    return;
   } else if (data.type === 'findAll') {
     const { chunk, target, nums } = data;
     let results = [];

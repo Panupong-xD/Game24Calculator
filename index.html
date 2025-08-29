@@ -434,6 +434,17 @@ function findFirstSolutionFast(nums, target) {
           terminateWorkers(workers);
           activeWorkers = [];
           isCalculating = false;
+        } else if (e.data.closest && !found) {
+          // กรณีไม่เจอเป๊ะ แต่เจอใกล้เคียง
+          const { expression, result, diff } = e.data.closest;
+          document.getElementById("results").innerHTML = `
+            <h2>ไม่พบคำตอบที่ตรงเป๊ะ</h2>
+            <h3>คำตอบที่ใกล้เคียงที่สุด:</h3>
+            <ul><li>${expression} = ${result} (ห่างจากเป้าหมาย ${diff.toFixed(4)})</li></ul>
+          `;
+          terminateWorkers(workers);
+          activeWorkers = [];
+          isCalculating = false;
         }
         resolve();
       };
@@ -554,7 +565,7 @@ function findAllSolutionsParallel(nums, target) {
         return;
       }
 
-      processedPerms += chunk.length;
+      //processedPerms += chunk.length;
       updateProgress(processedPerms, totalPerms, target, results, closestResult);
 
       const workerResults = e.data.results || [];
