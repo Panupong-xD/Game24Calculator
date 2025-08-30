@@ -771,6 +771,67 @@ body.dark-theme .container::after { opacity:0.25; }
   .container, .container:hover { transform:none !important; }
 }
 
+/* WebAssembly Status Indicators */
+.status-indicator {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: var(--bg-tertiary);
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+.status-icon {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.3s ease;
+}
+
+.status-icon.loading {
+  background: var(--accent-orange);
+  color: white;
+  animation: pulse 2s ease-in-out infinite alternate;
+}
+
+.status-icon.ready {
+  background: var(--accent-green);
+  color: white;
+}
+
+.status-icon.fallback {
+  background: var(--accent-red);
+  color: white;
+}
+
+.status-description {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+
+@keyframes pulse {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0.5;
+  }
+}
+
+/* Dark theme adjustments for status indicators */
+body.dark-theme .status-indicator {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
 @keyframes rainbow-move {
   0% {
     background-position: 0% 50%;
@@ -779,5 +840,3 @@ body.dark-theme .container::after { opacity:0.25; }
     background-position: 100% 50%;
   }
 }
-
-/* =================================================================== */

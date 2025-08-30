@@ -1,3 +1,6 @@
+// Import WebAssembly math module
+importScripts('./wasm-math.js');
+
 // Core variables
 let operatorFlags = {};
 let useIntegerMode = false;
@@ -14,8 +17,17 @@ function factorial(n) {
   if (n < 0 || n > MAX_FACTORIAL_INPUT || !Number.isInteger(n)) return NaN;
   if (n === 0 || n === 1) return 1;
   if (factorialCache.has(n)) return factorialCache.get(n);
-  let result = 1;
-  for (let i = 2; i <= n; i++) result *= i;
+  
+  // Use WebAssembly if available
+  let result;
+  if (self.wasmMath && self.wasmMath.isReady) {
+    result = self.wasmMath.factorial(n);
+  } else {
+    // JavaScript fallback
+    result = 1;
+    for (let i = 2; i <= n; i++) result *= i;
+  }
+  
   factorialCache.set(n, result);
   return result;
 }
@@ -26,24 +38,61 @@ function evaluateAST(node) {
   let rightVal = evaluateAST(node.right);
   const cacheKey = `${node.operator}|${leftVal}|${rightVal}`;
   if (calculationCache.has(cacheKey)) return calculationCache.get(cacheKey);
+  
   let result;
-  switch (node.operator) {
-    case "+": result = operatorFlags['+'] ? leftVal + rightVal : NaN; break;
-    case "-": result = operatorFlags['-'] ? leftVal - rightVal : NaN; break;
-    case "*": result = operatorFlags['*'] ? leftVal * rightVal : NaN; break;
-    case "/": result = operatorFlags['/'] && rightVal !== 0 ? leftVal / rightVal : NaN; break;
-    case "%":
-      if (!operatorFlags['%'] || rightVal === 0) return NaN;
-      result = leftVal - rightVal * Math.floor(leftVal / rightVal);
-      break;
-    case "^":
-      if (!operatorFlags['^']) return NaN;
-      result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : Math.pow(leftVal, rightVal);
-      break;
-    case "√": result = operatorFlags['√'] && rightVal >= 0 ? Math.sqrt(rightVal) : NaN; break;
-    case "!": result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? factorial(rightVal) : NaN; break;
-    default: return NaN;
+  
+  // Use WebAssembly for basic operations when available
+  if (self.wasmMath && self.wasmMath.isReady) {
+    switch (node.operator) {
+      case "+": 
+        result = operatorFlags['+'] ? self.wasmMath.add(leftVal, rightVal) : NaN; 
+        break;
+      case "-": 
+        result = operatorFlags['-'] ? self.wasmMath.sub(leftVal, rightVal) : NaN; 
+        break;
+      case "*": 
+        result = operatorFlags['*'] ? self.wasmMath.mul(leftVal, rightVal) : NaN; 
+        break;
+      case "/": 
+        result = operatorFlags['/'] && rightVal !== 0 ? self.wasmMath.div(leftVal, rightVal) : NaN; 
+        break;
+      case "%":
+        if (!operatorFlags['%'] || rightVal === 0) return NaN;
+        result = leftVal - rightVal * Math.floor(leftVal / rightVal);
+        break;
+      case "^":
+        if (!operatorFlags['^']) return NaN;
+        result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : self.wasmMath.pow(leftVal, rightVal);
+        break;
+      case "√": 
+        result = operatorFlags['√'] && rightVal >= 0 ? self.wasmMath.sqrt(rightVal) : NaN; 
+        break;
+      case "!": 
+        result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? self.wasmMath.factorial(rightVal) : NaN; 
+        break;
+      default: return NaN;
+    }
+  } else {
+    // JavaScript fallback
+    switch (node.operator) {
+      case "+": result = operatorFlags['+'] ? leftVal + rightVal : NaN; break;
+      case "-": result = operatorFlags['-'] ? leftVal - rightVal : NaN; break;
+      case "*": result = operatorFlags['*'] ? leftVal * rightVal : NaN; break;
+      case "/": result = operatorFlags['/'] && rightVal !== 0 ? leftVal / rightVal : NaN; break;
+      case "%":
+        if (!operatorFlags['%'] || rightVal === 0) return NaN;
+        result = leftVal - rightVal * Math.floor(leftVal / rightVal);
+        break;
+      case "^":
+        if (!operatorFlags['^']) return NaN;
+        result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : Math.pow(leftVal, rightVal);
+        break;
+      case "√": result = operatorFlags['√'] && rightVal >= 0 ? Math.sqrt(rightVal) : NaN; break;
+      case "!": result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? factorial(rightVal) : NaN; break;
+      default: return NaN;
+    }
   }
+  
   if (!isNaN(result)) {
     if (calculationCache.size > 1000000) calculationCache.clear();
     calculationCache.set(cacheKey, result);

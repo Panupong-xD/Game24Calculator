@@ -96,12 +96,22 @@
                 เปิดโหมดจำนวนเต็ม
               </button>
             </div>
+            
+            <div class="option-group">
+              <h3>สถานะระบบ</h3>
+              <div id="wasm-status" class="status-indicator">
+                <span id="wasm-status-text">กำลังโหลด WebAssembly...</span>
+                <div id="wasm-status-icon" class="status-icon loading"></div>
+              </div>
+              <p class="status-description">WebAssembly เพิ่มความเร็วในการคำนวณทางคณิตศาสตร์</p>
+            </div>
           </div>
         </div>
       </div>
     </div>
 
     <!-- JavaScript -->
+    <script src="wasm-math.js"></script>
     <script>
 // Page Navigation
 function showPage(pageId) {
@@ -219,8 +229,17 @@ function factorial(n) {
   if (n < 0 || n > MAX_FACTORIAL_INPUT || !Number.isInteger(n)) return NaN;
   if (n === 0 || n === 1) return 1;
   if (factorialCache.has(n)) return factorialCache.get(n);
-  let result = 1;
-  for (let i = 2; i <= n; i++) result *= i;
+  
+  // Use WebAssembly if available
+  let result;
+  if (window.wasmMath && window.wasmMath.isReady) {
+    result = window.wasmMath.factorial(n);
+  } else {
+    // JavaScript fallback
+    result = 1;
+    for (let i = 2; i <= n; i++) result *= i;
+  }
+  
   factorialCache.set(n, result);
   return result;
 }
@@ -231,24 +250,61 @@ function evaluateAST(node) {
   let rightVal = evaluateAST(node.right);
   const cacheKey = `${node.operator}|${leftVal}|${rightVal}`;
   if (calculationCache.has(cacheKey)) return calculationCache.get(cacheKey);
+  
   let result;
-  switch (node.operator) {
-    case "+": result = operatorFlags['+'] ? leftVal + rightVal : NaN; break;
-    case "-": result = operatorFlags['-'] ? leftVal - rightVal : NaN; break;
-    case "*": result = operatorFlags['*'] ? leftVal * rightVal : NaN; break;
-    case "/": result = operatorFlags['/'] && rightVal !== 0 ? leftVal / rightVal : NaN; break;
-    case "%":
-      if (!operatorFlags['%'] || rightVal === 0) return NaN;
-      result = leftVal - rightVal * Math.floor(leftVal / rightVal);
-      break;
-    case "^":
-      if (!operatorFlags['^']) return NaN;
-      result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : Math.pow(leftVal, rightVal);
-      break;
-    case "√": result = operatorFlags['√'] && rightVal >= 0 ? Math.sqrt(rightVal) : NaN; break;
-    case "!": result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? factorial(rightVal) : NaN; break;
-    default: return NaN;
+  
+  // Use WebAssembly for basic operations when available
+  if (window.wasmMath && window.wasmMath.isReady) {
+    switch (node.operator) {
+      case "+": 
+        result = operatorFlags['+'] ? window.wasmMath.add(leftVal, rightVal) : NaN; 
+        break;
+      case "-": 
+        result = operatorFlags['-'] ? window.wasmMath.sub(leftVal, rightVal) : NaN; 
+        break;
+      case "*": 
+        result = operatorFlags['*'] ? window.wasmMath.mul(leftVal, rightVal) : NaN; 
+        break;
+      case "/": 
+        result = operatorFlags['/'] && rightVal !== 0 ? window.wasmMath.div(leftVal, rightVal) : NaN; 
+        break;
+      case "%":
+        if (!operatorFlags['%'] || rightVal === 0) return NaN;
+        result = leftVal - rightVal * Math.floor(leftVal / rightVal);
+        break;
+      case "^":
+        if (!operatorFlags['^']) return NaN;
+        result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : window.wasmMath.pow(leftVal, rightVal);
+        break;
+      case "√": 
+        result = operatorFlags['√'] && rightVal >= 0 ? window.wasmMath.sqrt(rightVal) : NaN; 
+        break;
+      case "!": 
+        result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? window.wasmMath.factorial(rightVal) : NaN; 
+        break;
+      default: return NaN;
+    }
+  } else {
+    // JavaScript fallback
+    switch (node.operator) {
+      case "+": result = operatorFlags['+'] ? leftVal + rightVal : NaN; break;
+      case "-": result = operatorFlags['-'] ? leftVal - rightVal : NaN; break;
+      case "*": result = operatorFlags['*'] ? leftVal * rightVal : NaN; break;
+      case "/": result = operatorFlags['/'] && rightVal !== 0 ? leftVal / rightVal : NaN; break;
+      case "%":
+        if (!operatorFlags['%'] || rightVal === 0) return NaN;
+        result = leftVal - rightVal * Math.floor(leftVal / rightVal);
+        break;
+      case "^":
+        if (!operatorFlags['^']) return NaN;
+        result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : Math.pow(leftVal, rightVal);
+        break;
+      case "√": result = operatorFlags['√'] && rightVal >= 0 ? Math.sqrt(rightVal) : NaN; break;
+      case "!": result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? factorial(rightVal) : NaN; break;
+      default: return NaN;
+    }
   }
+  
   if (!isNaN(result)) {
     if (calculationCache.size > 1000000) calculationCache.clear();
     calculationCache.set(cacheKey, result);
@@ -794,11 +850,47 @@ function displayResults(results) {
 // Initialize
 addNumber();
 
+// Initialize WebAssembly status monitoring
+async function initializeWASM() {
+  const statusText = document.getElementById('wasm-status-text');
+  const statusIcon = document.getElementById('wasm-status-icon');
+  const statusDesc = document.querySelector('.status-description');
+  
+  try {
+    await window.wasmMath.initPromise;
+    
+    if (window.wasmMath.isReady) {
+      statusText.textContent = 'WebAssembly พร้อมใช้งาน (add, sub, mul, div)';
+      statusIcon.className = 'status-icon ready';
+      statusIcon.textContent = '✓';
+      statusDesc.textContent = 'WebAssembly ช่วยเพิ่มความเร็วการคำนวณทางคণิตศาสตร์ทั้ง 4 operations';
+    } else {
+      throw new Error(window.wasmMath.errorMessage || 'WebAssembly ไม่สามารถเริ่มต้นได้');
+    }
+  } catch (error) {
+    statusText.textContent = 'ใช้ JavaScript fallback';
+    statusIcon.className = 'status-icon fallback';
+    statusIcon.textContent = '⚠';
+    
+    if (window.wasmMath.errorMessage) {
+      statusDesc.innerHTML = `
+        <strong>สาเหตุ:</strong> ${window.wasmMath.errorMessage}<br>
+        <em>ระบบจะใช้ JavaScript ในการคำนวณแทน</em>
+      `;
+    } else {
+      statusDesc.textContent = 'ระบบจะใช้ JavaScript ในการคำนวณแทน';
+    }
+  }
+}
+
+// Initialize WASM status
+initializeWASM();
+
 // Set initial button states
 document.getElementById("toggleAddBtn").textContent = "ปิดการใช้ +";
 document.getElementById("toggleSubBtn").textContent = "ปิดการใช้ -";
 document.getElementById("toggleMulBtn").textContent = "ปิดการใช้ *";
 document.getElementById("toggleDivBtn").textContent = "ปิดการใช้ /";
     </script>
-  <script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'92c9ab9d28d2fe85',t:'MTc0NDAzMDQzMy4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv=params={r:'92d0b45d6972ce5f',t:'MTc0NDEwNDE5MS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script><script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'92d1fc79acdffdfd',t:'MTc0NDExNzYzMS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</body>
 </html>
