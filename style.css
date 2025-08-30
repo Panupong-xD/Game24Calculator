@@ -204,11 +204,26 @@ h1 {
   text-align: center;
   margin-bottom: 5px;
   letter-spacing: 5px;
-  background: linear-gradient(90deg, var(--accent-blue), var(--accent-purple));
+  /* เปลี่ยนเป็นสีรุ้งเคลื่อนไหว */
+  background: linear-gradient(
+    90deg,
+    #ff2d55 0%,
+    #ffcc00 16%,
+    #4cd964 33%,
+    #5ac8fa 50%,
+    #007aff 66%,
+    #af52de 83%,
+    #ff2d55 100%
+  );
+  background-size: 200% auto;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: fadeIn 0.8s ease-out;
+  animation: rainbow-move 2.5s linear infinite;
+  animation-direction: alternate;
+  animation-timing-function: linear;
+  /* ...existing code... */
+  /* animation: fadeIn 0.8s ease-out; (คงไว้ได้) */
 }
 
 h2 {
@@ -582,3 +597,187 @@ input, button {
 .dark-theme .loading-spinner {
   border-top-color: var(--accent-blue);
 }
+
+/* === GRAND MINIMAL ENHANCEMENTS ===================================== */
+/* Layered ambient background (animated gradient + soft radial lights) */
+body::before,
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: -2;
+}
+
+/* Soft moving gradient */
+body::before {
+  background:
+    radial-gradient(circle at 15% 20%, rgba(255,255,255,0.10), transparent 60%),
+    radial-gradient(circle at 85% 70%, rgba(255,255,255,0.08), transparent 65%),
+    conic-gradient(from 45deg, var(--bg-primary) 0deg, var(--bg-secondary) 120deg, var(--bg-primary) 240deg, var(--bg-secondary) 360deg);
+  mix-blend-mode: normal;
+  animation: ambientShift 18s linear infinite;
+  filter: saturate(120%) contrast(105%);
+}
+
+/* Subtle noise & grid overlay */
+body::after {
+  background:
+    repeating-linear-gradient(90deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 120px),
+    repeating-linear-gradient(0deg, rgba(255,255,255,0.04) 0 1px, transparent 1px 120px),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160' viewBox='0 0 160 160'%3E%3Crect width='160' height='160' fill='rgba(0,0,0,0)'/%3E%3Ccircle cx='80' cy='80' r='1' fill='rgba(255,255,255,0.18)'/%3E%3C/svg%3E");
+  opacity: 0.35;
+  z-index: -1;
+  mix-blend-mode: overlay;
+  mask: linear-gradient(to bottom, transparent 0%, #000 15%, #000 85%, transparent 100%);
+}
+
+@keyframes ambientShift {
+  0% { transform: translate3d(0,0,0) scale(1); filter: hue-rotate(0deg); }
+  50% { transform: translate3d(0,-2%,0) scale(1.02); filter: hue-rotate(20deg); }
+  100% { transform: translate3d(0,0,0) scale(1); filter: hue-rotate(0deg); }
+}
+
+/* Glass cards refined with luminous border */
+.container {
+  position: relative;
+  isolation: isolate;
+}
+.container::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px; /* thin gradient frame */
+  background: linear-gradient(140deg, rgba(255,255,255,0.5), rgba(255,255,255,0) 40%) border-box,
+              linear-gradient(210deg, var(--accent-blue), var(--accent-purple)) border-box;
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; /* Safari */
+  mask-composite: exclude;     /* Other */
+  opacity: 0.55;
+  pointer-events: none;
+  transition: opacity .6s ease;
+}
+.container:hover::before { opacity: 0.9; }
+
+/* Subtle inner glow */
+.container::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at 60% 30%, rgba(255,255,255,0.18), transparent 60%);
+  mix-blend-mode: overlay;
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+/* Navigation floating polish */
+.nav-container {
+  backdrop-filter: saturate(220%) blur(24px);
+  -webkit-backdrop-filter: saturate(220%) blur(24px);
+  border: 1px solid rgba(255,255,255,0.25);
+  box-shadow: 0 8px 40px -8px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.08) inset;
+}
+
+.nav-btn {
+  position: relative;
+  overflow: hidden;
+}
+.nav-btn.active::after {
+  content: "";
+  position: absolute; inset: 0;
+  background: linear-gradient(120deg, rgba(255,255,255,0.25), transparent 40%, rgba(255,255,255,0.15));
+  mix-blend-mode: overlay;
+  opacity: .7;
+  pointer-events: none;
+}
+
+/* Theme toggle refined */
+.theme-toggle {
+  box-shadow: 0 4px 16px -4px var(--shadow-color), 0 0 0 1px rgba(255,255,255,0.08) inset;
+}
+.theme-toggle::after { box-shadow: 0 2px 6px rgba(0,0,0,0.25), 0 0 0 1px rgba(0,0,0,0.15); }
+
+/* Inputs elevated */
+input[type="number"], .easy-input, .num, .sqrt-depth-input, .fact-depth-input {
+  backdrop-filter: blur(4px) saturate(130%);
+  -webkit-backdrop-filter: blur(4px) saturate(130%);
+}
+
+input[type="number"]:focus, .easy-input:focus, .num:focus {
+  box-shadow: 0 0 0 2px rgba(255,255,255,0.4), 0 0 0 4px var(--accent-blue), 0 8px 24px -6px var(--shadow-color);
+  transform: translateY(-2px);
+}
+
+/* Luxe buttons */
+button {
+  background-image: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+  box-shadow: 0 4px 18px -6px rgba(0,0,0,0.4), 0 6px 24px -10px var(--accent-blue);
+  letter-spacing: .5px;
+}
+button.toggle-btn { background: linear-gradient(135deg, var(--bg-tertiary), var(--bg-secondary)); }
+button.toggle-btn.active { background-image: linear-gradient(135deg, var(--accent-blue), var(--accent-purple)); box-shadow: 0 4px 14px -6px var(--accent-blue); }
+
+button.add-btn { background-image: linear-gradient(135deg, var(--accent-green), #2ecc71); }
+button.remove-btn { background-image: linear-gradient(135deg, var(--accent-red), #ff5f52); }
+button.calc-btn { font-weight: 700; letter-spacing: 1px; }
+
+button:hover { filter: brightness(1.05) saturate(110%); }
+button:active { filter: brightness(0.9); }
+
+/* Button sheen */
+button::after {
+  content: "";
+  position: absolute; top:0; left:-150%; width:130%; height:100%;
+  background: linear-gradient(115deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%);
+  transform: skewX(-20deg);
+  opacity: 0;
+  transition: opacity .6s ease, transform .9s cubic-bezier(.19,1,.22,1);
+}
+button:hover::after { opacity: .65; transform: translateX(180%) skewX(-20deg); }
+
+/* Animated result items */
+#results ul { list-style: none; padding: 0; }
+#results li { position: relative; overflow: hidden; }
+#results li { animation: fadeList .6s ease both; }
+#results li:nth-child(1){animation-delay:.02s}#results li:nth-child(2){animation-delay:.04s}#results li:nth-child(3){animation-delay:.06s}#results li:nth-child(4){animation-delay:.08s}#results li:nth-child(5){animation-delay:.10s}#results li:nth-child(6){animation-delay:.12s}#results li:nth-child(7){animation-delay:.14s}#results li:nth-child(8){animation-delay:.16s}
+
+@keyframes fadeList { from { opacity:0; transform: translateY(8px); } to { opacity:1; transform: translateY(0); } }
+
+/* Scrollbar refinement */
+#results::-webkit-scrollbar-thumb { background-image: linear-gradient(var(--accent-blue), var(--accent-purple)); }
+
+/* Depth hover for cards */
+.container:hover { transform: translateY(-6px) scale(1.01); }
+
+/* Page transition enhancement */
+.page { will-change: opacity, transform; }
+
+/* Subtle pulse on active calculation progress */
+#results h2 { position: relative; }
+#results h2::after { content:""; position:absolute; left:0; bottom:-6px; height:2px; width:100%; background:linear-gradient(90deg,var(--accent-blue),var(--accent-purple)); border-radius:2px; animation: progressGlow 3s linear infinite; opacity:.35; }
+@keyframes progressGlow { 0%{filter:blur(0) brightness(1);}50%{filter:blur(1px) brightness(1.3);}100%{filter:blur(0) brightness(1);} }
+
+/* Dark theme fine-tuning */
+body.dark-theme::after { opacity:0.25; }
+body.dark-theme .container::after { opacity:0.25; }
+
+/* Reduce motion option */
+@media (prefers-reduced-motion: reduce) {
+  body::before { animation: none; }
+  button::after { display:none; }
+  .container, .container:hover { transform:none !important; }
+}
+
+@keyframes rainbow-move {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
+}
+
+/* =================================================================== */
