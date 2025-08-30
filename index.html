@@ -509,27 +509,29 @@ function cancelAllWorkers() {
 }
 
 function findAllSolutionsParallel(nums, target) {
-  document.getElementById("results").innerHTML = `
-    <h2>กำลังเรียงสับเปลี่ยน...</h2>
-    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
-  `;
-
+  // 1. Worker Pool setup
+  const numWorkers = navigator.hardwareConcurrency || 4;
   const permutations = permute(nums);
-  let results = [];
-  let expressionSet = new Set();
-  let closestResult = null;
-  let smallestDiff = Infinity;
-  let processedPerms = 0;
   const totalPerms = permutations.length;
 
-  calculationCache.clear();
-  expressionCache.clear();
-
-  if (permutations.length === 0) {
+  if (totalPerms === 0) {
     document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบใดๆ</h2>";
     isCalculating = false;
     return;
   }
+
+  calculationCache.clear();
+  expressionCache.clear();
+
+  // 2. Work Distribution
+  const chunkSize = Math.ceil(totalPerms / numWorkers);
+  let workers = [];
+  let workersProgress = new Array(numWorkers).fill(0); // 3. Progress tracking array
+  let workersFinished = 0;
+  let results = [];
+  let expressionSet = new Set();
+  let closestResult = null;
+  let smallestDiff = Infinity;
 
   document.getElementById("results").innerHTML = `
     <h2>กำลังคำนวณ... 0% (0/${totalPerms})</h2>
@@ -537,67 +539,59 @@ function findAllSolutionsParallel(nums, target) {
     <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
   `;
 
-  const chunkSize = CHUNK_SIZE;
-  let currentIndex = 0;
-
-  function processNextChunk() {
-    if (cancelCalculation) {
-      cancelAllWorkers();
-      return;
-    }
-
-    const start = currentIndex;
-    const end = Math.min(currentIndex + chunkSize, permutations.length);
-    const chunk = permutations.slice(start, end);
+  for (let w = 0; w < numWorkers; w++) {
+    const start = w * chunkSize;
+    const end = Math.min(start + chunkSize, totalPerms);
+    
+    if (start >= totalPerms) break; // No more work for this worker
 
     const worker = new Worker('worker.js');
+    workers.push(worker);
     activeWorkers.push(worker);
 
     worker.onmessage = function(e) {
+      if (cancelCalculation) return;
+
       if (e.data.progress) {
-        processedPerms = start + e.data.processed;
-        updateProgress(processedPerms, totalPerms, target, results, e.data.closest || closestResult);
+        // 3. Real-time Progress Aggregation (PRESERVED)
+        workersProgress[w] = e.data.processed;
+        const totalProcessed = workersProgress.reduce((sum, val) => sum + val, 0);
+        
+        // Update closest result from this worker
         if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
           smallestDiff = e.data.closest.diff;
           closestResult = e.data.closest;
-          window.closestResultOnCancel = closestResult; // เก็บไว้สำหรับ cancel
+          window.closestResultOnCancel = closestResult;
         }
+        
+        // Update UI with aggregated progress
+        updateProgress(totalProcessed, totalPerms, target, results, closestResult);
         return;
       }
 
-      //processedPerms += chunk.length;
-      updateProgress(processedPerms, totalPerms, target, results, closestResult);
-
-      const workerResults = e.data.results || [];
-      workerResults.forEach(res => {
-        if (!expressionSet.has(res.expression)) {
-          expressionSet.add(res.expression);
-          results.push(res);
-        }
-      });
-
-      const workerClosest = e.data.closest;
-      if (workerClosest && workerClosest.diff !== undefined && !isNaN(workerClosest.diff)) {
-        if (Math.abs(workerClosest.diff) < smallestDiff) {
-          smallestDiff = Math.abs(workerClosest.diff);
-          closestResult = workerClosest;
-          window.closestResultOnCancel = closestResult; // เก็บไว้สำหรับ cancel
-          updateProgress(processedPerms, totalPerms, target, results, closestResult);
-        }
+      // 4. Result Handling - Final results from this worker
+      if (e.data.results) {
+        e.data.results.forEach(res => {
+          if (!expressionSet.has(res.expression)) {
+            expressionSet.add(res.expression);
+            results.push(res);
+          }
+        });
       }
 
+      if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
+        smallestDiff = e.data.closest.diff;
+        closestResult = e.data.closest;
+        window.closestResultOnCancel = closestResult;
+      }
+
+      // Mark this worker as finished
+      workersFinished++;
       worker.terminate();
-      activeWorkers = activeWorkers.filter(w => w !== worker);
+      activeWorkers = activeWorkers.filter(x => x !== worker);
 
-      if (processedPerms % 100 === 0) {
-        calculationCache.clear();
-        expressionCache.clear();
-      }
-
-      currentIndex += chunkSize;
-      if (currentIndex < permutations.length) {
-        setTimeout(processNextChunk, 0);
-      } else {
+      // 5. Completion - Check if all workers are done
+      if (workersFinished === workers.length) {
         if (results.length > 0) {
           displayResults(results);
         } else if (closestResult) {
@@ -621,16 +615,24 @@ function findAllSolutionsParallel(nums, target) {
       }
     };
 
-    worker.onerror = function(err) {
+    worker.onerror = function() {
+      workersFinished++;
       worker.terminate();
-      activeWorkers = activeWorkers.filter(w => w !== worker);
-      document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
-      isCalculating = false;
+      activeWorkers = activeWorkers.filter(x => x !== worker);
+      
+      if (workersFinished === workers.length) {
+        document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
+        activeWorkers = [];
+        isCalculating = false;
+      }
     };
 
+    // Send work range to this worker
     worker.postMessage({
-      type: 'findAll',
-      chunk,
+      type: 'findAllRange',
+      permutations,
+      start,
+      end,
       target,
       nums,
       operatorFlags,
@@ -641,8 +643,6 @@ function findAllSolutionsParallel(nums, target) {
       MAX_RESULTS: Infinity
     });
   }
-
-  processNextChunk();
 }
 
 function permute(arr) {
@@ -731,7 +731,6 @@ function updateProgress(processed, total, target, results, closestResult) {
   const percent = Math.round((processed / total) * 100);
   let closestText = "ยังไม่พบ";
   if (closestResult) {
-    // ปรับ logic: ถ้า diff == 0 ให้แสดงว่า "พบคำตอบที่ตรงเป้าหมาย"
     if (Math.abs(closestResult.diff) < 0.0001) {
       closestText = `${closestResult.expression} = ${closestResult.result} (ตรงเป๊ะ)`;
     } else {
@@ -745,23 +744,15 @@ function updateProgress(processed, total, target, results, closestResult) {
   `;
 }
 
-// prettyPrintExpression สำหรับแสดงผลลัพธ์ให้อ่านง่ายขึ้น (เฉพาะการแสดงผล ไม่ยุ่ง logic)
 function prettyPrintExpression(expr) {
-  // 1. √(x) → √x, (x)! → x!
   let s = expr
-    .replace(/\( *([^\(\)]+) *\)!/g, '$1!') // (x)! → x!
-    .replace(/√\(([^\(\)]+)\)/g, '√$1');    // √(x) → √x
+    .replace(/\( *([^\(\)]+) *\)!/g, '$1!')
+    .replace(/√\(([^\(\)]+)\)/g, '√$1');
 
-  // 2. ยกกำลัง: (a ^ b) → a^b
   s = s.replace(/\(([^\(\)]+)\s\^\s([^\(\)]+)\)/g, '$1^$2');
-
-  // 3. ×, ÷, mod
   s = s.replace(/\*/g, '×').replace(/\//g, '÷').replace(/%/g, ' mod ');
-
-  // 4. ตัดวงเล็บรอบตัวเลขเดียว
   s = s.replace(/\(([0-9]+)\)/g, '$1');
 
-  // 5. ลดวงเล็บซ้อนรอบสุดท้าย (เช่น ((a + b))) → (a + b)
   while (
     s.startsWith('(') &&
     s.endsWith(')') &&
@@ -778,13 +769,10 @@ function prettyPrintExpression(expr) {
     s = s.slice(1, -1);
   }
 
-  // 6. เว้นวรรคให้ดูดี
   s = s.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')');
-
   return s;
 }
 
-// ปรับจุดแสดงผลลัพธ์ให้ใช้ prettyPrintExpression ทุกโหมด
 function displayResults(results) {
   if (results.length > 0) {
     document.getElementById("results").innerHTML =
@@ -801,144 +789,6 @@ function displayResults(results) {
   } else {
     document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
   }
-}
-
-// ปรับจุดแสดงผลลัพธ์ใน findAllSolutionsParallel ให้ใช้ prettyPrintExpression
-function findAllSolutionsParallel(nums, target) {
-  document.getElementById("results").innerHTML = `
-    <h2>กำลังเรียงสับเปลี่ยน...</h2>
-    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
-  `;
-
-  const permutations = permute(nums);
-  let results = [];
-  let expressionSet = new Set();
-  let closestResult = null;
-  let smallestDiff = Infinity;
-  let processedPerms = 0;
-  const totalPerms = permutations.length;
-
-  calculationCache.clear();
-  expressionCache.clear();
-
-  if (permutations.length === 0) {
-    document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบใดๆ</h2>";
-    isCalculating = false;
-    return;
-  }
-
-  document.getElementById("results").innerHTML = `
-    <h2>กำลังคำนวณ... 0% (0/${totalPerms})</h2>
-    <p>ผลลัพธ์ที่ใกล้เคียงที่สุด: ยังไม่พบ</p>
-    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
-  `;
-
-  const chunkSize = CHUNK_SIZE;
-  let currentIndex = 0;
-
-  function processNextChunk() {
-    if (cancelCalculation) {
-      cancelAllWorkers();
-      return;
-    }
-
-    const start = currentIndex;
-    const end = Math.min(currentIndex + chunkSize, permutations.length);
-    const chunk = permutations.slice(start, end);
-
-    const worker = new Worker('worker.js');
-    activeWorkers.push(worker);
-
-    worker.onmessage = function(e) {
-      if (e.data.progress) {
-        processedPerms = start + e.data.processed;
-        updateProgress(processedPerms, totalPerms, target, results, e.data.closest || closestResult);
-        if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
-          smallestDiff = e.data.closest.diff;
-          closestResult = e.data.closest;
-          window.closestResultOnCancel = closestResult; // เก็บไว้สำหรับ cancel
-        }
-        return;
-      }
-
-      //processedPerms += chunk.length;
-      updateProgress(processedPerms, totalPerms, target, results, closestResult);
-
-      const workerResults = e.data.results || [];
-      workerResults.forEach(res => {
-        if (!expressionSet.has(res.expression)) {
-          expressionSet.add(res.expression);
-          results.push(res);
-        }
-      });
-
-      const workerClosest = e.data.closest;
-      if (workerClosest && workerClosest.diff !== undefined && !isNaN(workerClosest.diff)) {
-        if (Math.abs(workerClosest.diff) < smallestDiff) {
-          smallestDiff = Math.abs(workerClosest.diff);
-          closestResult = workerClosest;
-          window.closestResultOnCancel = closestResult; // เก็บไว้สำหรับ cancel
-          updateProgress(processedPerms, totalPerms, target, results, closestResult);
-        }
-      }
-
-      worker.terminate();
-      activeWorkers = activeWorkers.filter(w => w !== worker);
-
-      if (processedPerms % 100 === 0) {
-        calculationCache.clear();
-        expressionCache.clear();
-      }
-
-      currentIndex += chunkSize;
-      if (currentIndex < permutations.length) {
-        setTimeout(processNextChunk, 0);
-      } else {
-        if (results.length > 0) {
-          displayResults(results);
-        } else if (closestResult) {
-          if (Math.abs(closestResult.diff) < 0.0001) {
-            document.getElementById("results").innerHTML = `
-              <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
-              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${closestResult.result}</li></ul>
-            `;
-          } else {
-            const diff = Math.abs(closestResult.result - target).toFixed(4);
-            document.getElementById("results").innerHTML = `
-              <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
-              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${closestResult.result} (ห่างจากเป้าหมาย ${diff})</li></ul>
-            `;
-          }
-        } else {
-          document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
-        }
-        activeWorkers = [];
-        isCalculating = false;
-      }
-    };
-
-    worker.onerror = function(err) {
-      worker.terminate();
-      activeWorkers = activeWorkers.filter(w => w !== worker);
-      document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
-      isCalculating = false;
-    };
-
-    worker.postMessage({
-      type: 'findAll',
-      chunk,
-      target,
-      nums,
-      operatorFlags,
-      useIntegerMode,
-      MAX_SQRT_DEPTH,
-      MAX_FACT_DEPTH,
-      MAX_FACTORIAL_INPUT,
-      MAX_RESULTS: Infinity
-    });
-  }
-
-  processNextChunk();
 }
 
 // Initialize

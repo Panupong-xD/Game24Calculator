@@ -303,14 +303,12 @@ self.onmessage = function(e) {
   if (data.type === 'findFirstFast') {
     const { nums, target } = data;
     calculationCache.clear();
-    // ใช้ DFS แบบ backtracking
     let closest = { value: null };
     let found = dfsFindClosest(nums, target, [], nums.map(n => ({ type: "num", value: n })), closest);
     if (found) {
       self.postMessage({ found: true, expression: found.expression, result: found.result });
       return;
     }
-    // ถ้าไม่เจอเป๊ะ ส่งใกล้เคียงที่สุด
     if (closest.value) {
       self.postMessage({ found: false, closest: closest.value });
     } else {
@@ -337,7 +335,6 @@ self.onmessage = function(e) {
           const result = evaluateAST(ast);
           if (!isNaN(result)) {
             const diff = Math.abs(result - target);
-            // เฉพาะ expression ที่ใช้เลขครบเท่านั้น
             if (usesAllNumbers(ast, nums)) {
               if (diff < smallestDiff) {
                 smallestDiff = diff;
@@ -347,7 +344,8 @@ self.onmessage = function(e) {
                   diff, 
                   isExact: diff < 0.0001
                 };
-                self.postMessage({ progress: true, processed: p + 1, closest: closestResult });
+                // Keep progress reporting (relative to worker's range)
+                self.postMessage({ progress: true, processed: (p + 1), closest: closestResult });
               }
               if (diff < 0.0001) {
                 const canonicalAST = canonicalizeAST(ast);
@@ -359,22 +357,77 @@ self.onmessage = function(e) {
               }
             }
           }
+          // Keep progress reporting every 100 iterations
           if (i % 100 === 0) {
-            self.postMessage({ progress: true, processed: p + 1, closest: closestResult });
+            self.postMessage({ progress: true, processed: (p + 1), closest: closestResult });
           }
         }
       }
-      self.postMessage({ 
-        results, 
-        closest: closestResult 
-          || null // ถ้าไม่มี expression ที่ใช้เลขครบ ให้ closestResult เป็น null
-      });
+      
+      // Send final results
+      self.postMessage({ results, closest: closestResult || null });
     } catch (error) {
-      self.postMessage({ 
-        results, 
-        closest: closestResult || null, 
-        error: error.message 
-      });
+      self.postMessage({ results, closest: closestResult || null, error: error.message });
+      return;
+    }
+
+    calculationCache.clear();
+    expressionCache.clear();
+  } else if (data.type === 'findAllRange') {
+    // NEW: Range-based processing for multi-core
+    const { permutations, start, end, target, nums } = data;
+    let results = [];
+    let expressionSet = new Set();
+    let closestResult = null;
+    let smallestDiff = Infinity;
+
+    calculationCache.clear();
+    expressionCache.clear();
+
+    try {
+      for (let p = start; p < end; p++) {
+        const perm = permutations[p];
+        const expressions = generateAllGroupings(perm, target);
+        if (!Array.isArray(expressions)) continue;
+        
+        for (let i = 0; i < expressions.length; i++) {
+          const ast = expressions[i];
+          const result = evaluateAST(ast);
+          if (!isNaN(result)) {
+            const diff = Math.abs(result - target);
+            if (usesAllNumbers(ast, nums)) {
+              if (diff < smallestDiff) {
+                smallestDiff = diff;
+                closestResult = { 
+                  expression: serializeAST(ast), 
+                  result, 
+                  diff, 
+                  isExact: diff < 0.0001
+                };
+                // Keep progress reporting (relative to worker's range)
+                self.postMessage({ progress: true, processed: (p - start + 1), closest: closestResult });
+              }
+              if (diff < 0.0001) {
+                const canonicalAST = canonicalizeAST(ast);
+                const canonicalStr = serializeAST(canonicalAST);
+                if (!expressionSet.has(canonicalStr)) {
+                  expressionSet.add(canonicalStr);
+                  results.push({ expression: canonicalStr, result });
+                }
+              }
+            }
+          }
+          // Keep progress reporting every 100 iterations
+          if (i % 100 === 0) {
+            self.postMessage({ progress: true, processed: (p - start + 1), closest: closestResult });
+          }
+        }
+      }
+      
+      // Send final results
+      self.postMessage({ results, closest: closestResult || null });
+    } catch (error) {
+      self.postMessage({ results, closest: closestResult || null, error: error.message });
       return;
     }
 
