@@ -239,10 +239,32 @@ function usesAllNumbers(ast, originalNums) {
 }
 
 function dfsFindClosest(nums, target, used, exprs, closest) {
-  let n = nums.length;
+  // Optimized fast-mode DFS:
+  // - Avoid duplicate states via visited (multiset of numbers)
+  // - Combine pairs using i < j only; generate both directions for non-commutative ops
+  // - Heuristic ordering: try results nearer target first
+  // - Early exit on exact match
+  // - Quantize numbers for stable state keys
+  const visited = new Set();
+  const Q_FACTOR = 1e9; // quantization granularity for state key
+
+  function quantize(v) {
+    // Prevent huge states / noise; cap extremely large magnitudes to reduce branching
+    if (!isFinite(v)) return 'X';
+    return Math.round(v * Q_FACTOR) / Q_FACTOR;
+  }
+  function makeKey(arr) {
+    // Sort numeric values after quantization for canonical multiset key
+    return arr.map(quantize).sort((a,b)=>a-b).join(',');
+  }
+
   let found = null;
 
   function dfs(currentNums, currentExprs) {
+    const key = makeKey(currentNums);
+    if (visited.has(key)) return false; // already explored this multiset
+    visited.add(key);
+
     if (currentNums.length === 1) {
       const result = currentNums[0];
       const expr = currentExprs[0];
@@ -257,78 +279,113 @@ function dfsFindClosest(nums, target, used, exprs, closest) {
       return false;
     }
 
-    for (let i = 0; i < currentNums.length; i++) {
-      for (let j = 0; j < currentNums.length; j++) {
-        if (i === j) continue;
-        let nextNums = [];
-        let nextExprs = [];
-        for (let k = 0; k < currentNums.length; k++) {
-          if (k !== i && k !== j) {
-            nextNums.push(currentNums[k]);
-            nextExprs.push(currentExprs[k]);
-          }
+    const n = currentNums.length;
+    // Iterate combinations i<j to avoid symmetric duplicates
+    for (let i = 0; i < n - 1; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = currentNums[i];
+        const b = currentNums[j];
+        const exprA = currentExprs[i];
+        const exprB = currentExprs[j];
+
+        // Build next arrays excluding i, j once
+        const baseNums = [];
+        const baseExprs = [];
+        for (let k = 0; k < n; k++) {
+          if (k !== i && k !== j) { baseNums.push(currentNums[k]); baseExprs.push(currentExprs[k]); }
         }
-        // ลองทุก operator
-        const a = currentNums[i], b = currentNums[j];
-        const exprA = currentExprs[i], exprB = currentExprs[j];
-        const ops = [];
-        if (operatorFlags['+']) ops.push("+");
-        if (operatorFlags['-']) ops.push("-");
-        if (operatorFlags['*']) ops.push("*");
-        if (operatorFlags['/']) ops.push("/");
-        if (operatorFlags['%']) ops.push("%");
-        if (operatorFlags['^']) ops.push("^");
-        for (const op of ops) {
-          // ป้องกัน division/mod by zero, pow 0^neg
-          if ((op === "/" || op === "%") && Math.abs(b) < 1e-8) continue;
-          if (op === "^" && a === 0 && b <= 0) continue;
+
+        // Collect operation candidates (value + AST components) then sort by closeness to target
+        const candidates = [];
+        // Helper to push candidate if valid
+        function pushCandidate(op, leftVal, rightVal, leftExpr, rightExpr) {
           let val;
           switch (op) {
-            case "+": val = a + b; break;
-            case "-": val = a - b; break;
-            case "*": val = a * b; break;
-            case "/": val = a / b; break;
-            case "%": val = a - b * Math.floor(a / b); break;
-            case "^": val = Math.pow(a, b); break;
+            case '+': val = leftVal + rightVal; break;
+            case '-': val = leftVal - rightVal; break;
+            case '*': val = leftVal * rightVal; break;
+            case '/': val = Math.abs(rightVal) < 1e-12 ? NaN : leftVal / rightVal; break;
+            case '%': val = Math.abs(rightVal) < 1e-12 ? NaN : leftVal - rightVal * Math.floor(leftVal / rightVal); break;
+            case '^': if (leftVal === 0 && rightVal <= 0) val = NaN; else val = Math.pow(leftVal, rightVal); break;
+            default: val = NaN;
           }
-          if (isNaN(val) || !isFinite(val)) continue;
-          if (useIntegerMode && !isIntegerResult(val)) continue;
+          if (isNaN(val) || !isFinite(val)) return;
+          if (Math.abs(val) > 1e9) return; // prune extreme explosion
+          if (useIntegerMode && !isIntegerResult(val)) return;
+          const diff = Math.abs(val - target);
+          candidates.push({ op, val, diff, leftExpr, rightExpr });
+        }
 
-          // สร้าง AST
-          const ast = { type: "op", operator: op, left: exprA, right: exprB };
-          // ลอง sqrt/fact ต่อท้าย (ถ้าเปิด)
-          let astVariants = [ast];
-          // sqrt
-          if (operatorFlags['√'] && val >= 0 && MAX_SQRT_DEPTH > 0) {
-            let sqrtVal = val, sqrtAst = ast, sqrtDepth = 0;
-            while (sqrtDepth < MAX_SQRT_DEPTH) {
+        if (operatorFlags['+']) pushCandidate('+', a, b, exprA, exprB); // commutative once
+        if (operatorFlags['-']) { // both directions
+          pushCandidate('-', a, b, exprA, exprB);
+          pushCandidate('-', b, a, exprB, exprA);
+        }
+        if (operatorFlags['*']) pushCandidate('*', a, b, exprA, exprB); // commutative once
+        if (operatorFlags['/']) { // both directions
+          pushCandidate('/', a, b, exprA, exprB);
+            pushCandidate('/', b, a, exprB, exprA);
+        }
+        if (operatorFlags['%']) { // both directions
+          pushCandidate('%', a, b, exprA, exprB);
+          pushCandidate('%', b, a, exprB, exprA);
+        }
+        if (operatorFlags['^']) { // consider both exponent orders
+          pushCandidate('^', a, b, exprA, exprB);
+          pushCandidate('^', b, a, exprB, exprA);
+        }
+
+        // Heuristic ordering: try closest to target first
+        candidates.sort((x, y) => x.diff - y.diff);
+
+        for (const cand of candidates) {
+          // Build base AST for this operation
+            const ast = { type: 'op', operator: cand.op, left: cand.leftExpr, right: cand.rightExpr };
+          const astVariants = [ { ast, val: cand.val } ];
+
+          // Attempt sqrt chain
+          if (operatorFlags['√'] && cand.val >= 0 && MAX_SQRT_DEPTH > 0) {
+            let sqrtVal = cand.val;
+            let sqrtAst = ast;
+            let depth = 0;
+            while (depth < MAX_SQRT_DEPTH) {
               sqrtVal = Math.sqrt(sqrtVal);
               if (isNaN(sqrtVal) || !isFinite(sqrtVal)) break;
               if (useIntegerMode && !isIntegerResult(sqrtVal)) break;
-              sqrtAst = { type: "op", operator: "√", left: null, right: sqrtAst };
-              astVariants.push(sqrtAst);
-              sqrtDepth++;
+              sqrtAst = { type: 'op', operator: '√', left: null, right: sqrtAst };
+              astVariants.push({ ast: sqrtAst, val: sqrtVal });
+              depth++;
             }
           }
-          // fact
-          if (operatorFlags['!'] && val >= 0 && val <= MAX_FACTORIAL_INPUT && Number.isInteger(val) && MAX_FACT_DEPTH > 0) {
-            let factVal = val, factAst = ast, factDepth = 0;
-            while (factDepth < MAX_FACT_DEPTH) {
+          // Attempt factorial chain
+          if (operatorFlags['!'] && cand.val >= 0 && cand.val <= MAX_FACTORIAL_INPUT && Number.isInteger(cand.val) && MAX_FACT_DEPTH > 0) {
+            let factVal = cand.val;
+            let factAst = ast;
+            let depth = 0;
+            while (depth < MAX_FACT_DEPTH) {
               factVal = factorial(factVal);
               if (isNaN(factVal) || !isFinite(factVal)) break;
-              factAst = { type: "op", operator: "!", left: null, right: factAst };
-              astVariants.push(factAst);
-              factDepth++;
+              factAst = { type: 'op', operator: '!', left: null, right: factAst };
+              astVariants.push({ ast: factAst, val: factVal });
+              depth++;
             }
           }
-          // ลูปทุก variant
-          for (const astV of astVariants) {
-            let valV = evaluateAST(astV);
-            if (isNaN(valV) || !isFinite(valV)) continue;
+
+          for (const variant of astVariants) {
+            const valV = variant.val; // already computed; skip re-evaluate for speed
             if (useIntegerMode && !isIntegerResult(valV)) continue;
-            let nextNums2 = nextNums.concat([valV]);
-            let nextExprs2 = nextExprs.concat([astV]);
-            if (dfs(nextNums2, nextExprs2)) return true;
+            const nextNums = baseNums.concat([valV]);
+            const nextExprs = baseExprs.concat([variant.ast]);
+            if (Math.abs(valV - target) < 0.0001) {
+              found = { expression: serializeAST(variant.ast), result: valV, diff: 0, isExact: true };
+              return true;
+            }
+            // Update closest here (early) to aid pruning in deeper recursion
+            const diff = Math.abs(valV - target);
+            if (!closest.value || diff < closest.value.diff) {
+              closest.value = { expression: serializeAST(variant.ast), result: valV, diff, isExact: false };
+            }
+            if (dfs(nextNums, nextExprs)) return true;
           }
         }
       }
@@ -387,13 +444,12 @@ self.onmessage = function(e) {
             if (usesAllNumbers(ast, nums)) {
               if (diff < smallestDiff) {
                 smallestDiff = diff;
-                closestResult = { 
-                  expression: serializeAST(ast), 
-                  result, 
-                  diff, 
+                closestResult = {
+                  expression: serializeAST(ast),
+                  result,
+                  diff,
                   isExact: diff < 0.0001
                 };
-                // Keep progress reporting (relative to worker's range)
                 self.postMessage({ progress: true, processed: (p + 1), closest: closestResult });
               }
               if (diff < 0.0001) {
@@ -406,39 +462,31 @@ self.onmessage = function(e) {
               }
             }
           }
-          // Keep progress reporting every 100 iterations
           if (i % 100 === 0) {
             self.postMessage({ progress: true, processed: (p + 1), closest: closestResult });
           }
         }
       }
-      
-      // Send final results
       self.postMessage({ results, closest: closestResult || null });
     } catch (error) {
       self.postMessage({ results, closest: closestResult || null, error: error.message });
       return;
     }
-
     calculationCache.clear();
     expressionCache.clear();
   } else if (data.type === 'findAllRange') {
-    // NEW: Range-based processing for multi-core
     const { permutations, start, end, target, nums } = data;
     let results = [];
     let expressionSet = new Set();
     let closestResult = null;
     let smallestDiff = Infinity;
-
     calculationCache.clear();
     expressionCache.clear();
-
     try {
       for (let p = start; p < end; p++) {
         const perm = permutations[p];
         const expressions = generateAllGroupings(perm, target);
         if (!Array.isArray(expressions)) continue;
-        
         for (let i = 0; i < expressions.length; i++) {
           const ast = expressions[i];
           const result = evaluateAST(ast);
@@ -447,13 +495,12 @@ self.onmessage = function(e) {
             if (usesAllNumbers(ast, nums)) {
               if (diff < smallestDiff) {
                 smallestDiff = diff;
-                closestResult = { 
-                  expression: serializeAST(ast), 
-                  result, 
-                  diff, 
+                closestResult = {
+                  expression: serializeAST(ast),
+                  result,
+                  diff,
                   isExact: diff < 0.0001
                 };
-                // Keep progress reporting (relative to worker's range)
                 self.postMessage({ progress: true, processed: (p - start + 1), closest: closestResult });
               }
               if (diff < 0.0001) {
@@ -466,20 +513,16 @@ self.onmessage = function(e) {
               }
             }
           }
-          // Keep progress reporting every 100 iterations
           if (i % 100 === 0) {
             self.postMessage({ progress: true, processed: (p - start + 1), closest: closestResult });
           }
         }
       }
-      
-      // Send final results
       self.postMessage({ results, closest: closestResult || null });
     } catch (error) {
       self.postMessage({ results, closest: closestResult || null, error: error.message });
       return;
     }
-
     calculationCache.clear();
     expressionCache.clear();
   }
