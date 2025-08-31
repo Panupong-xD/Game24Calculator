@@ -860,10 +860,10 @@ async function initializeWASM() {
     await window.wasmMath.initPromise;
     
     if (window.wasmMath.isReady) {
-      statusText.textContent = 'WebAssembly พร้อมใช้งาน (add, sub, mul, div)';
+      statusText.textContent = 'WebAssembly พร้อมใช้งาน (add, sub, mul, div, sqrt)';
       statusIcon.className = 'status-icon ready';
       statusIcon.textContent = '✓';
-      statusDesc.textContent = 'WebAssembly ช่วยเพิ่มความเร็วการคำนวณทางคণิตศาสตร์ทั้ง 4 operations';
+      statusDesc.textContent = 'WebAssembly ช่วยเพิ่มความเร็วการคำนวณทางคณิตศาสตร์ทั้ง 5 operations';
     } else {
       throw new Error(window.wasmMath.errorMessage || 'WebAssembly ไม่สามารถเริ่มต้นได้');
     }
