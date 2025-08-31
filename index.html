@@ -51,11 +51,12 @@
             <div class="option-group">
               <h3>ตัวเลือกการคำนวณ</h3>
               <div class="operator-buttons">
+                <!-- Replace * and / visible text with × and ÷ -->
                 <button id="toggleAddBtn" class="toggle-btn" onclick="toggleOperator('+')">เปิดการใช้ +</button>
                 <button id="toggleSubBtn" class="toggle-btn" onclick="toggleOperator('-')">เปิดการใช้ -</button>
-                <button id="toggleMulBtn" class="toggle-btn" onclick="toggleOperator('*')">เปิดการใช้ *</button>
-                <button id="toggleDivBtn" class="toggle-btn" onclick="toggleOperator('/')">เปิดการใช้ /</button>
-                <button id="toggleModBtn" class="toggle-btn" onclick="toggleOperator('%')">เปิดการใช้ %</button>
+                <button id="toggleMulBtn" class="toggle-btn" onclick="toggleOperator('*')">เปิดการใช้ ×</button>
+                <button id="toggleDivBtn" class="toggle-btn" onclick="toggleOperator('/')">เปิดการใช้ ÷</button>
+                <button id="toggleModBtn" class="toggle-btn" onclick="toggleOperator('%')">เปิดการใช้ mod</button>
                 <button id="togglePowBtn" class="toggle-btn" onclick="toggleOperator('^')">เปิดการใช้ ^</button>
                 <button id="toggleSqrtBtn" class="toggle-btn" onclick="toggleOperator('√')">เปิดการใช้ √</button>
                 <div id="sqrt-depth-container" class="sqrt-depth-container">
@@ -147,16 +148,24 @@ function toggleTheme() {
   document.body.classList.toggle('dark-theme');
 }
 
+function displayOperatorLabel(op){
+  if(op==='*') return '×';
+  if(op=== '/') return '÷';
+  if(op=== '%') return 'mod';
+  return op;
+}
+
 function toggleOperator(op) {
   operatorFlags[op] = !operatorFlags[op];
   const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : 'Fact'}Btn`);
+  const disp = displayOperatorLabel(op);
   if (operatorFlags[op]) {
-    btn.textContent = `ปิดการใช้ ${op}`;
+    btn.textContent = `ปิดการใช้ ${disp}`;
     btn.classList.add('active');
     if (op === '√') document.getElementById("sqrt-depth-container").classList.add("active");
     if (op === '!') document.getElementById("fact-depth-container").style.display = "block";
   } else {
-    btn.textContent = `เปิดการใช้ ${op}`;
+    btn.textContent = `เปิดการใช้ ${disp}`;
     btn.classList.remove('active');
     if (op === '√') document.getElementById("sqrt-depth-container").classList.remove("active");
     if (op === '!') document.getElementById("fact-depth-container").style.display = "none";
@@ -905,8 +914,8 @@ initializeWASM();
 // Set initial button states
 document.getElementById("toggleAddBtn").textContent = "ปิดการใช้ +";
 document.getElementById("toggleSubBtn").textContent = "ปิดการใช้ -";
-document.getElementById("toggleMulBtn").textContent = "ปิดการใช้ *";
-document.getElementById("toggleDivBtn").textContent = "ปิดการใช้ /";
+document.getElementById("toggleMulBtn").textContent = "ปิดการใช้ ×";
+document.getElementById("toggleDivBtn").textContent = "ปิดการใช้ ÷";
     </script>
 </body>
 </html>
