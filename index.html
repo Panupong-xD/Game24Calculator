@@ -33,6 +33,7 @@
             id="target"
             placeholder="ผลลัพธ์"
             class="easy-input"
+            step="any"
           />
           <br />
           <button class="calc-btn" onclick="findSolutions()">ค้นหาคำตอบ</button>
@@ -214,6 +215,7 @@ function addNumber() {
     input.type = "number";
     input.className = "num";
     input.placeholder = "0";
+    input.step = "any"; // allow decimals
     div.appendChild(input);
     document.getElementById("numbers").appendChild(div);
   }
@@ -396,9 +398,7 @@ function generateAllGroupings(nums, target) {
               const newExpr = { type: "op", operator: op, left, right };
               const resultVal = evaluateAST(newExpr);
               if (isNaN(resultVal)) continue;
-
-              if (Math.abs(resultVal - target) > 10000) continue;
-
+              // Removed magnitude pruning (|resultVal - target| > 10000) to fully retain decimal possibilities
               if (!useIntegerMode || isIntegerResult(resultVal)) {
                 result.push(newExpr);
                 if (operatorFlags['√'] && getSqrtDepth(newExpr) < MAX_SQRT_DEPTH) {
@@ -437,6 +437,13 @@ function generateAllGroupings(nums, target) {
   return generateGroupingsHelper(0, nums.length - 1);
 }
 
+// Flexible numeric formatting
+function formatNumber(n) {
+  if (Number.isInteger(n)) return n.toString();
+  const s = n.toFixed(8); // high precision then trim
+  return s.replace(/\.0+$/,'').replace(/(\.[0-9]*?)0+$/,'$1');
+}
+
 function findSolutions() {
   if (isCalculating) return;
   isCalculating = true;
@@ -444,8 +451,8 @@ function findSolutions() {
   activeWorkers = [];
 
   const numContainers = document.querySelectorAll(".num-container");
-  const nums = Array.from(numContainers).map(container => parseInt(container.querySelector(".num").value) || 0);
-  const target = parseInt(document.getElementById("target").value);
+  const nums = Array.from(numContainers).map(container => parseFloat(container.querySelector(".num").value)).map(v => (isNaN(v) ? 0 : v));
+  const target = parseFloat(document.getElementById("target").value);
 
   if (isNaN(target)) {
     document.getElementById("results").innerHTML = "<h2>กรุณากรอกผลลัพธ์ที่ต้องการ</h2>";
@@ -486,18 +493,25 @@ function findFirstSolutionFast(nums, target) {
         if (e.data.found && !found) {
           found = true;
           const { expression, result } = e.data;
-          document.getElementById("results").innerHTML = `<h2>ผลลัพธ์:</h2><ul><li>${prettyPrintExpression(expression)} = ${result}</li></ul>`;
+          document.getElementById("results").innerHTML = `<h2>ผลลัพธ์:</h2><ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)}</li></ul>`;
           terminateWorkers(workers);
           activeWorkers = [];
           isCalculating = false;
         } else if (e.data.closest && !found) {
-          // กรณีไม่เจอเป๊ะ แต่เจอใกล้เคียง
+          const EXACT_EPS = 1e-12;
           const { expression, result, diff } = e.data.closest;
-          document.getElementById("results").innerHTML = `
-            <h2>ไม่พบคำตอบที่ตรงเป๊ะ</h2>
-            <h3>คำตอบที่ใกล้เคียงที่สุด:</h3>
-            <ul><li>${prettyPrintExpression(expression)} = ${result} (ห่างจากเป้าหมาย ${diff.toFixed(4)})</li></ul>
-          `;
+          if (Math.abs(diff) <= EXACT_EPS) {
+            document.getElementById("results").innerHTML = `
+              <h2>ผลลัพธ์:</h2>
+              <ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)} (ตรงเป๊ะ)</li></ul>
+            `;
+          } else {
+            document.getElementById("results").innerHTML = `
+              <h2>ไม่พบคำตอบที่ตรงเป๊ะ</h2>
+              <h3>คำตอบที่ใกล้เคียงที่สุด:</h3>
+              <ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)} (ห่างจากเป้าหมาย ${formatNumber(diff)})</li></ul>
+            `;
+          }
           terminateWorkers(workers);
           activeWorkers = [];
           isCalculating = false;
@@ -545,18 +559,17 @@ function cancelAllWorkers() {
     isCalculating = false;
     // แสดงผลลัพธ์ที่ใกล้เคียงที่สุด ณ เวลานั้น
     if (window.closestResultOnCancel) {
-      if (Math.abs(window.closestResultOnCancel.diff) < 0.0001) {
+      const EXACT_EPS = 1e-12;
+      if (Math.abs(window.closestResultOnCancel.diff) <= EXACT_EPS) {
         document.getElementById("results").innerHTML = `
           <h2>การคำนวณถูกยกเลิก</h2>
           <h3>พบคำตอบที่ตรงเป๊ะ:</h3>
-          <ul><li>${window.closestResultOnCancel.expression} = ${window.closestResultOnCancel.result}</li></ul>
-        `;
+          <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)}</li></ul>`;
       } else {
         document.getElementById("results").innerHTML = `
           <h2>การคำนวณถูกยกเลิก</h2>
           <h3>คำตอบที่ใกล้เคียงที่สุด:</h3>
-          <ul><li>${window.closestResultOnCancel.expression} = ${window.closestResultOnCancel.result} (ห่างจากเป้าหมาย ${window.closestResultOnCancel.diff.toFixed(4)})</li></ul>
-        `;
+          <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)} (ห่างจากเป้าหมาย ${formatNumber(window.closestResultOnCancel.diff)})</li></ul>`;
       }
     } else {
       document.getElementById("results").innerHTML = `<h2>การคำนวณถูกยกเลิก: ไม่พบคำตอบใดๆ</h2>`;
@@ -607,25 +620,18 @@ function findAllSolutionsParallel(nums, target) {
 
     worker.onmessage = function(e) {
       if (cancelCalculation) return;
-
+      const EXACT_EPS = 1e-12;
       if (e.data.progress) {
-        // 3. Real-time Progress Aggregation (PRESERVED)
         workersProgress[w] = e.data.processed;
         const totalProcessed = workersProgress.reduce((sum, val) => sum + val, 0);
-        
-        // Update closest result from this worker
         if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
           smallestDiff = e.data.closest.diff;
           closestResult = e.data.closest;
           window.closestResultOnCancel = closestResult;
         }
-        
-        // Update UI with aggregated progress
         updateProgress(totalProcessed, totalPerms, target, results, closestResult);
         return;
       }
-
-      // 4. Result Handling - Final results from this worker
       if (e.data.results) {
         e.data.results.forEach(res => {
           if (!expressionSet.has(res.expression)) {
@@ -634,33 +640,28 @@ function findAllSolutionsParallel(nums, target) {
           }
         });
       }
-
       if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
         smallestDiff = e.data.closest.diff;
         closestResult = e.data.closest;
         window.closestResultOnCancel = closestResult;
       }
-
-      // Mark this worker as finished
       workersFinished++;
       worker.terminate();
       activeWorkers = activeWorkers.filter(x => x !== worker);
-
-      // 5. Completion - Check if all workers are done
       if (workersFinished === workers.length) {
         if (results.length > 0) {
           displayResults(results);
         } else if (closestResult) {
-          if (Math.abs(closestResult.diff) < 0.0001) {
+          if (Math.abs(closestResult.diff) <= EXACT_EPS) {
             document.getElementById("results").innerHTML = `
               <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
-              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${closestResult.result}</li></ul>
+              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)}</li></ul>
             `;
           } else {
-            const diff = Math.abs(closestResult.result - target).toFixed(4);
+            const diff = Math.abs(closestResult.result - target).toPrecision(8);
             document.getElementById("results").innerHTML = `
               <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
-              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${closestResult.result} (ห่างจากเป้าหมาย ${diff})</li></ul>
+              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ห่างจากเป้าหมาย ${diff})</li></ul>
             `;
           }
         } else {
@@ -744,7 +745,11 @@ function usesAllNumbers(ast, originalNums) {
   if (numbers.length !== originalNums.length) return false;
   const sortedUsed = [...numbers].sort((a, b) => a - b);
   const sortedOriginal = [...originalNums].sort((a, b) => a - b);
-  return sortedUsed.every((val, i) => val === sortedOriginal[i]);
+  const EPS = 1e-9;
+  for (let i = 0; i < sortedUsed.length; i++) {
+    if (Math.abs(sortedUsed[i] - sortedOriginal[i]) > EPS) return false;
+  }
+  return true;
 }
 
 function respectsLockOrder(ast, originalNums, lockedIndices) {
@@ -786,11 +791,12 @@ function respectsLockOrder(ast, originalNums, lockedIndices) {
 function updateProgress(processed, total, target, results, closestResult) {
   const percent = Math.round((processed / total) * 100);
   let closestText = "ยังไม่พบ";
+  const EXACT_EPS = 1e-12; // match worker strict exactness
   if (closestResult) {
-    if (Math.abs(closestResult.diff) < 0.0001) {
-      closestText = `${closestResult.expression} = ${closestResult.result} (ตรงเป๊ะ)`;
+    if (Math.abs(closestResult.diff) <= EXACT_EPS) {
+      closestText = `${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ตรงเป๊ะ)`;
     } else {
-      closestText = `${closestResult.expression} = ${closestResult.result} (ห่างจากเป้าหมาย ${closestResult.diff.toFixed(4)})`;
+      closestText = `${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ห่างจากเป้าหมาย ${formatNumber(closestResult.diff)})`;
     }
   }
   document.getElementById("results").innerHTML = `
@@ -803,9 +809,9 @@ function updateProgress(processed, total, target, results, closestResult) {
 function prettyPrintExpression(expr) {
   let s = expr
     .replace(/\( *([^\(\)]+) *\)!/g, '$1!')
-    .replace(/√\(([^\(\)]+)\)/g, '√$1');
+    .replace(/√\(([^(\)]+)\)/g, '√$1');
 
-  s = s.replace(/\(([^\(\)]+)\s\^\s([^\(\)]+)\)/g, '$1^$2');
+  s = s.replace(/\(([^(\)]+)\s\^\s([^\(\)]+)\)/g, '$1^$2');
   s = s.replace(/\*/g, '×').replace(/\//g, '÷').replace(/%/g, ' mod ');
   s = s.replace(/\(([0-9]+)\)/g, '$1');
 
@@ -833,15 +839,22 @@ function displayResults(results) {
   if (results.length > 0) {
     document.getElementById("results").innerHTML =
       `<h2>ผลลัพธ์ (${results.length} รายการ):</h2><ul>` +
-      results.map((res) => `<li>${prettyPrintExpression(res.expression)} = ${res.result}</li>`).join("") +
+      results.map((res) => `<li>${prettyPrintExpression(res.expression)} = ${formatNumber(res.result)}</li>`).join("") +
       `</ul>`;
   } else if (window.closestResultOnCancel) {
-    const target = parseInt(document.getElementById("target").value);
-    const diff = Math.abs(window.closestResultOnCancel.result - target).toFixed(4);
-    document.getElementById("results").innerHTML = `
-      <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
-      <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${window.closestResultOnCancel.result} (ห่างจากเป้าหมาย ${diff})</li></ul>
-    `;
+    const target = parseFloat(document.getElementById("target").value);
+    const EXACT_EPS = 1e-12;
+    const diffRaw = Math.abs(window.closestResultOnCancel.result - target);
+    if (diffRaw <= EXACT_EPS) {
+      document.getElementById("results").innerHTML = `
+        <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
+        <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)}</li></ul>`;
+    } else {
+      const diff = diffRaw.toPrecision(8);
+      document.getElementById("results").innerHTML = `
+        <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
+        <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)} (ห่างจากเป้าหมาย ${diff})</li></ul>`;
+    }
   } else {
     document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
   }
@@ -849,6 +862,9 @@ function displayResults(results) {
 
 // Initialize
 addNumber();
+// Ensure initial input supports decimals
+const firstNum = document.querySelector('.num');
+if (firstNum) firstNum.step = 'any';
 
 // Initialize WebAssembly status monitoring
 async function initializeWASM() {
