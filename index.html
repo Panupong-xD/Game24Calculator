@@ -12,8 +12,8 @@
       <!-- New liquid glass segmented control -->
       <div class="nav-glass-switch">
         <div class="nav-blob"></div>
-        <button class="nav-btn nav-tab active" onclick="showPage('calculation-page');" data-target="calculation-page">การคำนวณ</button>
-        <button class="nav-btn nav-tab" onclick="showPage('settings-page');" data-target="settings-page">การตั้งค่า</button>
+        <button class="nav-btn nav-tab active" onclick="showPage('calculation-page', this);" data-target="calculation-page">การคำนวณ</button>
+        <button class="nav-btn nav-tab" onclick="showPage('settings-page', this);" data-target="settings-page">การตั้งค่า</button>
       </div>
       <div class="theme-toggle" onclick="toggleTheme()"></div>
     </div>
@@ -104,12 +104,19 @@
     <!-- JavaScript -->
     <script src="wasm-math.js"></script>
     <script>
-// Page Navigation
-function showPage(pageId) {
-  document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
-  document.getElementById(pageId).classList.add('active');
-  document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
-  event.target.classList.add('active');
+// Page Navigation (refactored to avoid reliance on global event)
+function showPage(pageId, sourceBtn=null) {
+  // switch page visibility
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  const pageEl = document.getElementById(pageId);
+  if(pageEl) pageEl.classList.add('active');
+  // update active nav button
+  const buttons = document.querySelectorAll('.nav-glass-switch .nav-btn');
+  buttons.forEach(btn=>btn.classList.remove('active'));
+  let targetBtn = sourceBtn || document.querySelector(`.nav-glass-switch .nav-btn[data-target="${pageId}"]`);
+  if(targetBtn) targetBtn.classList.add('active');
+  // sync blob position after layout
+  requestAnimationFrame(()=> updateNavBlob());
 }
 
 // Core variables
@@ -135,6 +142,8 @@ document.body.classList.add('light-theme');
 function toggleTheme() {
   document.body.classList.toggle('light-theme');
   document.body.classList.toggle('dark-theme');
+  // ensure blob still aligned after theme transition
+  setTimeout(updateNavBlob, 300);
 }
 
 function displayOperatorLabel(op){
@@ -167,13 +176,13 @@ document.getElementById("toggleMulBtn").classList.add('active');
 document.getElementById("toggleDivBtn").classList.add('active');
 
 function updateNavBlob(){
-  const blob = document.querySelector('.nav-blob');
-  const active = document.querySelector('.nav-glass-switch .nav-btn.active');
-  if(!blob || !active) return;
+  const switchEl = document.querySelector('.nav-glass-switch');
+  const blob = switchEl?.querySelector('.nav-blob');
+  const active = switchEl?.querySelector('.nav-btn.active');
+  if(!blob || !active || !switchEl) return;
   const rect = active.getBoundingClientRect();
-  const parentRect = active.parentElement.getBoundingClientRect();
+  const parentRect = switchEl.getBoundingClientRect();
   const left = rect.left - parentRect.left;
-  // distance-based squish intensity
   if(typeof window.prevBlobLeft === 'undefined') window.prevBlobLeft = left;
   const delta = left - window.prevBlobLeft;
   const adelta = Math.abs(delta);
@@ -181,26 +190,14 @@ function updateNavBlob(){
   if(adelta > 60) blob.classList.add('squish-strong');
   else if(adelta > 25) blob.classList.add('squish-medium');
   else blob.classList.add('squish-light');
-  // apply target width & position variable
   blob.style.width = rect.width + 'px';
   blob.style.setProperty('--blob-x', left + 'px');
-  // retrigger animation
-  blob.classList.remove('animating');
-  // force reflow to restart keyframes
-  void blob.offsetWidth;
-  blob.classList.add('animating');
   window.prevBlobLeft = left;
 }
 
-// Override showPage to include blob update (keeping original logic)
-const _origShowPage = showPage;
-showPage = function(pageId){
-  _origShowPage(pageId);
-  requestAnimationFrame(()=>updateNavBlob());
-};
-
-window.addEventListener('resize', updateNavBlob);
-window.addEventListener('load', updateNavBlob);
+window.addEventListener('resize', ()=> requestAnimationFrame(updateNavBlob));
+window.addEventListener('orientationchange', ()=> setTimeout(updateNavBlob,150));
+window.addEventListener('load', ()=> setTimeout(updateNavBlob,50));
 
 function toggleFastMode() {
   useFastMode = !useFastMode;
@@ -432,7 +429,6 @@ function generateAllGroupings(nums, target) {
               const newExpr = { type: "op", operator: op, left, right };
               const resultVal = evaluateAST(newExpr);
               if (isNaN(resultVal)) continue;
-              // Removed magnitude pruning (|resultVal - target| > 10000) to fully retain decimal possibilities
               if (!useIntegerMode || isIntegerResult(resultVal)) {
                 result.push(newExpr);
                 if (operatorFlags['√'] && getSqrtDepth(newExpr) < MAX_SQRT_DEPTH) {
@@ -591,7 +587,6 @@ function cancelAllWorkers() {
   activeWorkers = [];
   if (isCalculating) {
     isCalculating = false;
-    // แสดงผลลัพธ์ที่ใกล้เคียงที่สุด ณ เวลานั้น
     if (window.closestResultOnCancel) {
       const EXACT_EPS = 1e-12;
       if (Math.abs(window.closestResultOnCancel.diff) <= EXACT_EPS) {
@@ -612,7 +607,6 @@ function cancelAllWorkers() {
 }
 
 function findAllSolutionsParallel(nums, target) {
-  // 1. Worker Pool setup
   const numWorkers = navigator.hardwareConcurrency || 4;
   const permutations = permute(nums);
   const totalPerms = permutations.length;
@@ -626,10 +620,9 @@ function findAllSolutionsParallel(nums, target) {
   calculationCache.clear();
   expressionCache.clear();
 
-  // 2. Work Distribution
   const chunkSize = Math.ceil(totalPerms / numWorkers);
   let workers = [];
-  let workersProgress = new Array(numWorkers).fill(0); // 3. Progress tracking array
+  let workersProgress = new Array(numWorkers).fill(0);
   let workersFinished = 0;
   let results = [];
   let expressionSet = new Set();
@@ -645,13 +638,10 @@ function findAllSolutionsParallel(nums, target) {
   for (let w = 0; w < numWorkers; w++) {
     const start = w * chunkSize;
     const end = Math.min(start + chunkSize, totalPerms);
-    
-    if (start >= totalPerms) break; // No more work for this worker
-
+    if (start >= totalPerms) break;
     const worker = new Worker('worker.js');
     workers.push(worker);
     activeWorkers.push(worker);
-
     worker.onmessage = function(e) {
       if (cancelCalculation) return;
       const EXACT_EPS = 1e-12;
@@ -710,7 +700,6 @@ function findAllSolutionsParallel(nums, target) {
       workersFinished++;
       worker.terminate();
       activeWorkers = activeWorkers.filter(x => x !== worker);
-      
       if (workersFinished === workers.length) {
         document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
         activeWorkers = [];
@@ -718,7 +707,6 @@ function findAllSolutionsParallel(nums, target) {
       }
     };
 
-    // Send work range to this worker
     worker.postMessage({
       type: 'findAllRange',
       permutations,
@@ -794,19 +782,15 @@ function respectsLockOrder(ast, originalNums, lockedIndices) {
     if (node.right) extractPositions(node.right, [...position, 'right']);
   }
   extractPositions(ast);
-
   const originalPositions = new Map();
   originalNums.forEach((num, index) => originalPositions.set(index, num));
-
   for (const lockedIndex of lockedIndices) {
     const lockedNum = originalNums[lockedIndex];
     const lockedPosInAST = numberPositions.find(np => np.value === lockedNum);
     if (!lockedPosInAST) return false;
-
     const allPositions = numberPositions.map(np => np.position.length);
     const maxDepth = Math.max(...allPositions);
     const lockedDepth = lockedPosInAST.position.length;
-
     if (lockedIndex === originalNums.length - 1) {
       if (lockedDepth !== maxDepth || numberPositions.filter(np => np.position.length === maxDepth).length > 1) return false;
     } else if (lockedIndex === 0) {
@@ -825,7 +809,7 @@ function respectsLockOrder(ast, originalNums, lockedIndices) {
 function updateProgress(processed, total, target, results, closestResult) {
   const percent = Math.round((processed / total) * 100);
   let closestText = "ยังไม่พบ";
-  const EXACT_EPS = 1e-12; // match worker strict exactness
+  const EXACT_EPS = 1e-12;
   if (closestResult) {
     if (Math.abs(closestResult.diff) <= EXACT_EPS) {
       closestText = `${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ตรงเป๊ะ)`;
@@ -844,11 +828,9 @@ function prettyPrintExpression(expr) {
   let s = expr
     .replace(/\( *([^\(\)]+) *\)!/g, '$1!')
     .replace(/√\(([^(\)]+)\)/g, '√$1');
-
   s = s.replace(/\(([^(\)]+)\s\^\s([^\(\)]+)\)/g, '$1^$2');
   s = s.replace(/\*/g, '×').replace(/\//g, '÷').replace(/%/g, ' mod ');
   s = s.replace(/\(([0-9]+)\)/g, '$1');
-
   while (
     s.startsWith('(') &&
     s.endsWith(')') &&
@@ -864,7 +846,6 @@ function prettyPrintExpression(expr) {
   ) {
     s = s.slice(1, -1);
   }
-
   s = s.replace(/\s+/g, ' ').replace(/\( /g, '(').replace(/ \)/g, ')');
   return s;
 }
@@ -942,76 +923,36 @@ document.getElementById("toggleSubBtn").textContent = "ปิดการใช�
 document.getElementById("toggleMulBtn").textContent = "ปิดการใช้ ×";
 document.getElementById("toggleDivBtn").textContent = "ปิดการใช้ ÷";
 
+// Improved drag logic with robust mobile support & page sync
 function initNavDrag(){
   const switchEl = document.querySelector('.nav-glass-switch');
   const blob = switchEl?.querySelector('.nav-blob');
   if(!switchEl || !blob) return;
-  const buttons = [...switchEl.querySelectorAll('.nav-btn')];
-  let dragging=false; let dragIndex=-1; let startX=0; let offsetX=0; let currentTargetIndex = buttons.findIndex(b=>b.classList.contains('active'));
-  let pressTimeout=null; let pressed=false;
+  const buttons = Array.from(switchEl.querySelectorAll('.nav-btn'));
+  let dragging=false; let startX=0; let blobStart=0; let activeIndex = buttons.findIndex(b=>b.classList.contains('active')) || 0; let currentIndex=activeIndex; let pointerId=null; let framePending=false;
 
-  function layout(){ buttons.forEach((btn,i)=>btn.dataset.index=i); }
-  layout();
+  function clamp(v,min,max){return Math.max(min,Math.min(max,v));}
+  function setActive(i){ buttons.forEach(b=>b.classList.remove('active')); const btn=buttons[i]; if(btn){ btn.classList.add('active'); showPage(btn.dataset.target, btn); } }
+  function positionBlobTo(i, animate=true){ const btn=buttons[i]; if(!btn) return; const rect=btn.getBoundingClientRect(); const parentRect=switchEl.getBoundingClientRect(); const left = rect.left - parentRect.left; blob.style.width = rect.width + 'px'; if(!animate) switchEl.classList.add('dragging'); blob.style.setProperty('--blob-x', left + 'px'); if(animate){ switchEl.classList.remove('dragging'); } }
+  positionBlobTo(activeIndex,false);
 
-  function setBlobToIndex(i, animate=true){
-    const btn = buttons[i]; if(!btn) return;
-    const rect = btn.getBoundingClientRect(); const parentRect = switchEl.getBoundingClientRect();
-    const left = rect.left - parentRect.left;
-    blob.style.width = rect.width + 'px';
-    blob.style.setProperty('--blob-x', left + 'px');
-    if(!animate){ switchEl.classList.add('dragging'); }
-    else { switchEl.classList.remove('dragging'); }
-  }
-  requestAnimationFrame(()=> setBlobToIndex(currentTargetIndex,false));
+  function pointerDown(e){ if(dragging) return; if(e.type==='mousedown' && e.button!==0) return; const targetBtn = e.target.closest('.nav-btn'); if(!targetBtn) return; pointerId = e.pointerId || (e.touches? e.touches[0].identifier: 'touch'); dragging=true; switchEl.classList.add('dragging'); const parentRect = switchEl.getBoundingClientRect(); startX = (e.touches? e.touches[0].clientX : e.clientX); const blobRect = blob.getBoundingClientRect(); blobStart = blobRect.left - parentRect.left; currentIndex = buttons.indexOf(targetBtn); e.preventDefault(); }
+  function pointerMove(e){ if(!dragging) return; const clientX = (e.touches? e.touches[0].clientX : e.clientX); const parentRect = switchEl.getBoundingClientRect(); const delta = clientX - startX; const rawX = blobStart + delta; const maxX = parentRect.width - blob.offsetWidth - 4; const x = clamp(rawX, 0, maxX); blob.style.setProperty('--blob-x', x + 'px'); if(framePending) return; framePending=true; requestAnimationFrame(()=>{ framePending=false; // determine nearest index based on center
+      const blobCenter = x + blob.offsetWidth/2; let nearest = 0; let best=Infinity; buttons.forEach((btn,i)=>{ const r=btn.getBoundingClientRect(); const c = r.left - parentRect.left + r.width/2; const d=Math.abs(c-blobCenter); if(d<best){ best=d; nearest=i; }}); currentIndex = nearest; }); }
+  function pointerUp(){ if(!dragging) return; dragging=false; switchEl.classList.remove('dragging'); positionBlobTo(currentIndex,true); if(currentIndex!==activeIndex){ activeIndex=currentIndex; setActive(activeIndex); } else { // ensure sync even if same index
+    setActive(activeIndex);
+  } }
+  function cancelDrag(){ if(!dragging) return; dragging=false; switchEl.classList.remove('dragging'); positionBlobTo(activeIndex,true); }
 
-  function applyPress(){ if(!blob.classList.contains('pressing')) blob.classList.add('pressing'); }
-  function releasePress(){ blob.classList.remove('pressing'); }
-
-  function pointerDown(e){
-    if(e.button!==0 && !e.touches) return;
-    const targetBtn = e.target.closest('.nav-btn');
-    if(!targetBtn) return; dragging=true; switchEl.classList.add('dragging'); blob.classList.remove('release-bounce');
-    dragIndex = parseInt(targetBtn.dataset.index,10);
-    currentTargetIndex = dragIndex;
-    const parentRect = switchEl.getBoundingClientRect();
-    startX = (e.touches? e.touches[0].clientX : e.clientX) - parentRect.left;
-    const blobRect = blob.getBoundingClientRect();
-    offsetX = startX - (blobRect.left - parentRect.left);
-    applyPress();
-    pressed=true;
-    e.preventDefault();
-  }
-  function pointerMove(e){ if(!dragging) return;
-    const clientX = e.touches? e.touches[0].clientX : e.clientX;
-    const parentRect = switchEl.getBoundingClientRect();
-    let x = clientX - parentRect.left - offsetX;
-    const maxX = parentRect.width - blob.offsetWidth - 8;
-    x = Math.max(0, Math.min(x, maxX));
-    blob.style.setProperty('--blob-x', x + 'px');
-    blob.style.width = buttons[dragIndex].offsetWidth + 'px';
-    let nearest = currentTargetIndex; let minDist=Infinity;
-    buttons.forEach((btn,i)=>{ const r=btn.getBoundingClientRect(); const center = r.left - parentRect.left + r.width/2; const dist=Math.abs(center - (x + blob.offsetWidth/2)); if(dist<minDist){ minDist=dist; nearest=i; }});
-    currentTargetIndex = nearest;
-  }
-  function pointerUp(){ if(!dragging) return; dragging=false; switchEl.classList.remove('dragging');
-    setBlobToIndex(currentTargetIndex,true);
-    buttons.forEach(b=>b.classList.remove('active'));
-    const btn = buttons[currentTargetIndex]; btn.classList.add('active');
-    showPage(btn.getAttribute('data-target'));
-    releasePress(); pressed=false;
-    blob.classList.remove('release-bounce'); void blob.offsetWidth; blob.classList.add('release-bounce');
-  }
-  function pointerLeave(e){ if(!pressed) return; if(dragging){ pointerUp(); } else { releasePress(); } }
-
-  switchEl.addEventListener('mousedown', pointerDown);
-  switchEl.addEventListener('touchstart', pointerDown,{passive:false});
-  window.addEventListener('mousemove', pointerMove);
-  window.addEventListener('touchmove', pointerMove,{passive:false});
-  window.addEventListener('mouseup', pointerUp);
-  window.addEventListener('touchend', pointerUp);
-  window.addEventListener('mouseleave', pointerLeave);
-  window.addEventListener('touchcancel', pointerLeave);
-  window.addEventListener('resize', ()=> setBlobToIndex(currentTargetIndex,true));
+  switchEl.addEventListener('mousedown', pointerDown, {passive:false});
+  switchEl.addEventListener('touchstart', pointerDown, {passive:false});
+  window.addEventListener('mousemove', pointerMove, {passive:false});
+  window.addEventListener('touchmove', pointerMove, {passive:false});
+  window.addEventListener('mouseup', pointerUp, {passive:false});
+  window.addEventListener('touchend', pointerUp, {passive:false});
+  window.addEventListener('touchcancel', cancelDrag, {passive:false});
+  window.addEventListener('mouseleave', cancelDrag);
+  window.addEventListener('resize', ()=> positionBlobTo(activeIndex,true));
 }
 window.addEventListener('load', initNavDrag);
     </script>
