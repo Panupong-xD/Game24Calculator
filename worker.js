@@ -93,7 +93,7 @@ function generateAllGroupings(nums,target){
         if(!Array.isArray(leftExprs)||!Array.isArray(rightExprs)) continue;
         for(const left of leftExprs){
           const leftVal = evaluateAST(left); if(isNaN(leftVal)) continue;
-          for(const right of rightExprs){
+            for(const right of rightExprs){
             const rightVal = evaluateAST(right); if(isNaN(rightVal)) continue;
             const ops=[]; if(operatorFlags['+']) ops.push('+'); if(operatorFlags['-']) ops.push('-'); if(operatorFlags['*']) ops.push('*'); if(operatorFlags['/']) ops.push('/'); if(operatorFlags['%']) ops.push('%'); if(operatorFlags['^']) ops.push('^');
             for(const op of ops){
@@ -135,32 +135,105 @@ function usesAllNumbers(ast, originalNums){
   const su=[...numbers].sort((a,b)=>a-b); const so=[...originalNums].sort((a,b)=>a-b); const EPS=1e-9; for(let i=0;i<su.length;i++){ if(Math.abs(su[i]-so[i])>EPS) return false; } return true;
 }
 
+// Optimized fast DFS with heuristics & pruning
 function dfsFindClosest(nums,target,used,exprs,closest){
-  const visited=new Set(); const Q_FACTOR=1e9; function quantize(v){ if(!isFinite(v)) return 'X'; return Math.round(v*Q_FACTOR)/Q_FACTOR;} function makeKey(arr){ return arr.map(quantize).sort((a,b)=>a-b).join(','); }
+  const visited=new Set();
+  const Q_FACTOR=1e9; // quantization precision
+  function quantize(v){ if(!isFinite(v)) return 'X'; return Math.round(v*Q_FACTOR)/Q_FACTOR; }
+  function makeKey(arr){ return arr.map(quantize).sort((a,b)=>a-b).join(','); }
   let found=null;
+  let bestDiff = closest.value ? closest.value.diff : Infinity;
+  const magnitudeBaseLimit = Math.max(1e6, Math.abs(target)*64 + 1000);
+
+  const ENABLE = { '+': !!operatorFlags['+'], '-': !!operatorFlags['-'], '*': !!operatorFlags['*'], '/': !!operatorFlags['/'], '%': !!operatorFlags['%'], '^': !!operatorFlags['^'], '√': !!operatorFlags['√'], '!': !!operatorFlags['!'] };
+
+  function recordCandidate(val, ast, isFull){
+    if(!isFull) return false; // ignore partial expressions for reporting/closest
+    const diff=Math.abs(val-target);
+    if(diff < bestDiff){
+      bestDiff = diff;
+      closest.value={expression:serializeAST(ast), result:val, diff, isExact: diff <= EXACT_EPS};
+    }
+    if(diff <= EXACT_EPS){
+      // isFull already guarantees usesAllNumbers
+      found={expression:serializeAST(ast), result:val, diff:0, isExact:true};
+      return true;
+    }
+    return false;
+  }
+
   function dfs(currentNums,currentExprs){
     const key=makeKey(currentNums); if(visited.has(key)) return false; visited.add(key);
-    if(currentNums.length===1){ const result=currentNums[0]; const expr=currentExprs[0]; const diff=Math.abs(result-target); if(diff <= EXACT_EPS){ found={expression:serializeAST(expr), result, diff, isExact:true}; return true;} if(!closest.value || diff < closest.value.diff){ closest.value={expression:serializeAST(expr), result, diff, isExact:false}; } return false; }
+    if(currentNums.length===1){
+      const result=currentNums[0];
+      const expr=currentExprs[0];
+      if(usesAllNumbers(expr, nums)){
+        if(recordCandidate(result, expr, true)) return true;
+      }
+      return false;
+    }
+
     const n=currentNums.length;
-    for(let i=0;i<n-1;i++) for(let j=i+1;j<n;j++){
+    const pairMeta = [];
+    for(let i=0;i<n-1;i++){
+      for(let j=i+1;j<n;j++){
+        const a=currentNums[i], b=currentNums[j];
+        if(Math.abs(a)>magnitudeBaseLimit && Math.abs(b)>magnitudeBaseLimit) continue;
+        let bestLocal = Infinity;
+        if(ENABLE['+']) bestLocal = Math.min(bestLocal, Math.abs((a+b)-target));
+        if(ENABLE['-']) { bestLocal = Math.min(bestLocal, Math.abs((a-b)-target)); bestLocal = Math.min(bestLocal, Math.abs((b-a)-target)); }
+        if(ENABLE['*']) bestLocal = Math.min(bestLocal, Math.abs((a*b)-target));
+        if(ENABLE['/']) { if(Math.abs(b)>1e-12) bestLocal = Math.min(bestLocal, Math.abs((a/b)-target)); if(Math.abs(a)>1e-12) bestLocal = Math.min(bestLocal, Math.abs((b/a)-target)); }
+        if(ENABLE['%']) { if(Math.abs(b)>1e-12) bestLocal = Math.min(bestLocal, Math.abs((a - b*Math.floor(a/b))-target)); if(Math.abs(a)>1e-12) bestLocal = Math.min(bestLocal, Math.abs((b - a*Math.floor(b/a))-target)); }
+        if(ENABLE['^']) { if(!(a===0 && b<=0)) bestLocal = Math.min(bestLocal, Math.abs(Math.pow(a,b)-target)); if(!(b===0 && a<=0)) bestLocal = Math.min(bestLocal, Math.abs(Math.pow(b,a)-target)); }
+        pairMeta.push({i,j,score:bestLocal});
+      }
+    }
+    pairMeta.sort((x,y)=>x.score-y.score);
+
+    for(const {i,j} of pairMeta){
       const a=currentNums[i], b=currentNums[j]; const exprA=currentExprs[i], exprB=currentExprs[j];
       const baseNums=[]; const baseExprs=[]; for(let k=0;k<n;k++){ if(k!==i && k!==j){ baseNums.push(currentNums[k]); baseExprs.push(currentExprs[k]); }}
-      const candidates=[]; function pushCandidate(op,la,rb,ea,eb){ let val; const cacheKey=op+'|'+la+'|'+rb; if(opResultCache.has(cacheKey)){ val=opResultCache.get(cacheKey); } else { switch(op){ case '+': val=la+rb; break; case '-': val=la-rb; break; case '*': val=la*rb; break; case '/': val= Math.abs(rb) < 1e-12 ? NaN : la/rb; break; case '%': val= Math.abs(rb) < 1e-12 ? NaN : la - rb * Math.floor(la/rb); break; case '^': val = (la===0 && rb<=0)? NaN : Math.pow(la,rb); break; default: val=NaN; } opResultCache.set(cacheKey,val); }
-        if(isNaN(val)||!isFinite(val)) return; if(Math.abs(val)>1e9) return; if(useIntegerMode && !isIntegerResult(val)) return; const diff=Math.abs(val-target); candidates.push({op,val,diff,leftExpr:ea,rightExpr:eb}); }
-      if(operatorFlags['+']) pushCandidate('+',a,b,exprA,exprB);
-      if(operatorFlags['-']){ pushCandidate('-',a,b,exprA,exprB); pushCandidate('-',b,a,exprB,exprA); }
-      if(operatorFlags['*']) pushCandidate('*',a,b,exprA,exprB);
-      if(operatorFlags['/']){ pushCandidate('/',a,b,exprA,exprB); pushCandidate('/',b,a,exprB,exprA); }
-      if(operatorFlags['%']){ pushCandidate('%',a,b,exprA,exprB); pushCandidate('%',b,a,exprB,exprA); }
-      if(operatorFlags['^']){ pushCandidate('^',a,b,exprA,exprB); pushCandidate('^',b,a,exprB,exprA); }
+      const candidates=[];
+      function pushCandidate(op,la,rb,ea,eb){
+        let val; const cacheKey=op+'|'+la+'|'+rb; if(opResultCache.has(cacheKey)){ val=opResultCache.get(cacheKey); } else { switch(op){ case '+': val=la+rb; break; case '-': val=la-rb; break; case '*': val=la*rb; break; case '/': val= Math.abs(rb) < 1e-12 ? NaN : la/rb; break; case '%': val= Math.abs(rb) < 1e-12 ? NaN : la - rb * Math.floor(la/rb); break; case '^': val = (la===0 && rb<=0)? NaN : Math.pow(la,rb); break; default: val=NaN; } opResultCache.set(cacheKey,val); }
+        if(isNaN(val)||!isFinite(val)) return;
+        if(useIntegerMode && !isIntegerResult(val)) return;
+        if(Math.abs(val) > magnitudeBaseLimit*4) return;
+        const diff = Math.abs(val-target);
+        // Adaptive pruning: allow worse than bestDiff only if many numbers remain (more room to improve)
+        const remaining = baseNums.length; // after combining -> remaining count
+        const tolerance = (remaining>=3) ? (0.35 * (remaining-2) * (1+Math.abs(target))) : 0; // heuristic tolerance
+        if(bestDiff !== Infinity && diff > bestDiff + tolerance) return;
+        candidates.push({op,val,diff,leftExpr:ea,rightExpr:eb});
+      }
+      if(ENABLE['+']) pushCandidate('+', a<=b?a:b, a<=b?b:a, a<=b?exprA:exprB, a<=b?exprB:exprA);
+      if(ENABLE['-']){ pushCandidate('-',a,b,exprA,exprB); pushCandidate('-',b,a,exprB,exprA); }
+      if(ENABLE['*']) pushCandidate('*', a<=b?a:b, a<=b?b:a, a<=b?exprA:exprB, a<=b?exprB:exprA);
+      if(ENABLE['/']){ pushCandidate('/',a,b,exprA,exprB); pushCandidate('/',b,a,exprB,exprA); }
+      if(ENABLE['%']){ pushCandidate('%',a,b,exprA,exprB); pushCandidate('%',b,a,exprB,exprA); }
+      if(ENABLE['^']){ pushCandidate('^',a,b,exprA,exprB); pushCandidate('^',b,a,exprB,exprA); }
+      if(candidates.length===0) continue;
       candidates.sort((x,y)=>x.diff-y.diff);
       for(const cand of candidates){
         const ast={type:'op',operator:cand.op,left:cand.leftExpr,right:cand.rightExpr,value:cand.val};
         const variants=[{ast,val:cand.val}];
-        if(operatorFlags['√'] && cand.val>=0 && MAX_SQRT_DEPTH>0){ let sv=cand.val; let sa=ast; let d=0; while(d<MAX_SQRT_DEPTH){ sv=Math.sqrt(sv); if(isNaN(sv)||!isFinite(sv)) break; if(useIntegerMode && !isIntegerResult(sv)) break; sa={type:'op',operator:'√',left:null,right:sa,value:sv}; variants.push({ast:sa,val:sv}); d++; } }
-        if(operatorFlags['!'] && cand.val>=0 && cand.val<=MAX_FACTORIAL_INPUT && Number.isInteger(cand.val) && MAX_FACT_DEPTH>0){ let fv=cand.val; let fa=ast; let d=0; while(d<MAX_FACT_DEPTH){ fv=factorial(fv); if(isNaN(fv)||!isFinite(fv)) break; fa={type:'op',operator:'!',left:null,right:fa,value:fv}; variants.push({ast:fa,val:fv}); d++; } }
-        for(const variant of variants){ const valV=variant.val; if(useIntegerMode && !isIntegerResult(valV)) continue; const nextNums=baseNums.concat([valV]); const nextExprs=baseExprs.concat([variant.ast]); if(Math.abs(valV - target) <= EXACT_EPS){ found={expression:serializeAST(variant.ast), result:valV, diff:0, isExact:true}; return true;} const diff=Math.abs(valV-target); if(!closest.value || diff < closest.value.diff){ closest.value={expression:serializeAST(variant.ast), result:valV, diff, isExact:false}; } if(dfs(nextNums,nextExprs)) return true; }
+        if(ENABLE['√'] && cand.val>=0 && MAX_SQRT_DEPTH>0){ let sv=cand.val; let sa=ast; let d=0; while(d<MAX_SQRT_DEPTH){ sv=Math.sqrt(sv); if(isNaN(sv)||!isFinite(sv)) break; if(useIntegerMode && !isIntegerResult(sv)) break; sa={type:'op',operator:'√',left:null,right:sa,value:sv}; variants.push({ast:sa,val:sv}); d++; } }
+        if(ENABLE['!'] && cand.val>=0 && cand.val<=MAX_FACTORIAL_INPUT && Number.isInteger(cand.val) && MAX_FACT_DEPTH>0){ let fv=cand.val; let fa=ast; let d=0; while(d<MAX_FACT_DEPTH){ fv=factorial(fv); if(isNaN(fv)||!isFinite(fv)) break; fa={type:'op',operator:'!',left:null,right:fa,value:fv}; variants.push({ast:fa,val:fv}); d++; } }
+        for(const variant of variants){
+          const valV=variant.val;
+            if(useIntegerMode && !isIntegerResult(valV)) continue;
+          const isFull = (n===2); // after combining pair when only 2 numbers left -> full expression
+          if(isFull){
+            if(recordCandidate(valV, variant.ast, true)) return true;
+          }
+          const nextNums=baseNums.concat([valV]);
+          const nextExprs=baseExprs.concat([variant.ast]);
+          if(dfs(nextNums,nextExprs)) return true;
+        }
       }
+      // Optional early break: if we already have perfect diff 0
+      if(bestDiff <= EXACT_EPS) return true;
     }
     return false;
   }
