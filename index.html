@@ -607,27 +607,23 @@ function cancelAllWorkers() {
 }
 
 function findAllSolutionsParallel(nums, target) {
-  const numWorkers = navigator.hardwareConcurrency || 4;
   const permutations = permute(nums);
   const totalPerms = permutations.length;
+  if (totalPerms === 0) { document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบใดๆ</h2>"; isCalculating = false; return; }
+  const numWorkers = navigator.hardwareConcurrency || 4;
+  calculationCache.clear(); expressionCache.clear();
+  activeWorkers.forEach(w=>w.terminate()); activeWorkers=[];
 
-  if (totalPerms === 0) {
-    document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบใดๆ</h2>";
-    isCalculating = false;
-    return;
-  }
-
-  calculationCache.clear();
-  expressionCache.clear();
-
-  const chunkSize = Math.ceil(totalPerms / numWorkers);
-  let workers = [];
-  let workersProgress = new Array(numWorkers).fill(0);
-  let workersFinished = 0;
-  let results = [];
-  let expressionSet = new Set();
-  let closestResult = null;
-  let smallestDiff = Infinity;
+  let results = []; let expressionSet = new Set();
+  let closestResult = null; let smallestDiff = Infinity;
+  let nextIndex = 0; // next permutation index to assign
+  let baseBatchSize = 4; // starting batch size (perms per assignment)
+  const maxBatchSize = 64;
+  let completedPerms = 0; // fully processed permutations
+  const inProgress = new Map(); // worker -> processed inside its current batch
+  let workersFinished = 0; // workers that became idle after queue drained
+  const EXACT_EPS = 1e-12;
+  let lastUIUpdate = 0;
 
   document.getElementById("results").innerHTML = `
     <h2>กำลังคำนวณ... 0% (0/${totalPerms})</h2>
@@ -635,92 +631,87 @@ function findAllSolutionsParallel(nums, target) {
     <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
   `;
 
-  for (let w = 0; w < numWorkers; w++) {
-    const start = w * chunkSize;
-    const end = Math.min(start + chunkSize, totalPerms);
-    if (start >= totalPerms) break;
-    const worker = new Worker('worker.js');
-    workers.push(worker);
-    activeWorkers.push(worker);
-    worker.onmessage = function(e) {
-      if (cancelCalculation) return;
-      const EXACT_EPS = 1e-12;
-      if (e.data.progress) {
-        workersProgress[w] = e.data.processed;
-        const totalProcessed = workersProgress.reduce((sum, val) => sum + val, 0);
-        if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
-          smallestDiff = e.data.closest.diff;
-          closestResult = e.data.closest;
-          window.closestResultOnCancel = closestResult;
+  function adaptiveBatchSize(){
+    // Simple growth: enlarge when >50% queue remaining processed quickly
+    if (baseBatchSize < maxBatchSize) baseBatchSize = Math.min(maxBatchSize, baseBatchSize * 2);
+  }
+
+  function aggregateProcessed(){
+    let inProgSum = 0; inProgress.forEach(v=> inProgSum += v);
+    return completedPerms + inProgSum;
+  }
+
+  function updateUI(force=false){
+    const now = performance.now(); if(!force && now - lastUIUpdate < 80) return; lastUIUpdate = now;
+    const processed = aggregateProcessed();
+    const percent = Math.round((processed/totalPerms)*100);
+    let closestText = "ยังไม่พบ";
+    if (closestResult){
+      if (Math.abs(closestResult.diff) <= EXACT_EPS) closestText = `${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ตรงเป๊ะ)`;
+      else closestText = `${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ห่างจากเป้าหมาย ${formatNumber(closestResult.diff)})`;
+    }
+    document.getElementById("results").innerHTML = `
+      <h2>กำลังคำนวณ... ${percent}% (${processed}/${totalPerms})</h2>
+      <p>ผลลัพธ์ที่ใกล้เคียงที่สุด: ${closestText}</p>
+      <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
+    `;
+  }
+
+  function finalizeIfDone(){
+    if (completedPerms >= totalPerms && inProgress.size===0){
+      // all permutations processed
+      if (results.length > 0){ displayResults(results); }
+      else if (closestResult){
+        if (Math.abs(closestResult.diff) <= EXACT_EPS){
+          document.getElementById("results").innerHTML = `
+            <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
+            <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)}</li></ul>`;
+        } else {
+          const diff = Math.abs(closestResult.result - target).toPrecision(8);
+          document.getElementById("results").innerHTML = `
+            <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
+            <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ห่างจากเป้าหมาย ${diff})</li></ul>`;
         }
-        updateProgress(totalProcessed, totalPerms, target, results, closestResult);
+      } else {
+        document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
+      }
+      activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; isCalculating=false; return true;
+    }
+    return false;
+  }
+
+  function assignBatch(worker){
+    if (cancelCalculation) return; if (nextIndex >= totalPerms){ return; }
+    const start = nextIndex; const size = Math.min(baseBatchSize, totalPerms - nextIndex); const end = start + size; nextIndex = end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'findAllRange', permutations, start, end, target, nums, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity });
+    if (nextIndex < totalPerms) adaptiveBatchSize();
+  }
+
+  for(let w=0; w<numWorkers; w++){
+    const worker = new Worker('worker.js'); activeWorkers.push(worker);
+    worker.onmessage = function(e){ if(cancelCalculation) return; const data=e.data;
+      if (data.progress){
+        // data.processed is within current batch (1..batchSize)
+        inProgress.set(worker, Math.min(data.processed, (worker._batchEnd - worker._batchStart)));
+        if (data.closest && (!closestResult || data.closest.diff < smallestDiff)) { smallestDiff=data.closest.diff; closestResult=data.closest; window.closestResultOnCancel=closestResult; }
+        updateUI();
         return;
       }
-      if (e.data.results) {
-        e.data.results.forEach(res => {
-          if (!expressionSet.has(res.expression)) {
-            expressionSet.add(res.expression);
-            results.push(res);
-          }
-        });
+      if (data.results){
+        data.results.forEach(res=>{ if(!expressionSet.has(res.expression)){ expressionSet.add(res.expression); results.push(res);} });
       }
-      if (e.data.closest && (!closestResult || e.data.closest.diff < smallestDiff)) {
-        smallestDiff = e.data.closest.diff;
-        closestResult = e.data.closest;
-        window.closestResultOnCancel = closestResult;
-      }
-      workersFinished++;
-      worker.terminate();
-      activeWorkers = activeWorkers.filter(x => x !== worker);
-      if (workersFinished === workers.length) {
-        if (results.length > 0) {
-          displayResults(results);
-        } else if (closestResult) {
-          if (Math.abs(closestResult.diff) <= EXACT_EPS) {
-            document.getElementById("results").innerHTML = `
-              <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
-              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)}</li></ul>
-            `;
-          } else {
-            const diff = Math.abs(closestResult.result - target).toPrecision(8);
-            document.getElementById("results").innerHTML = `
-              <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
-              <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ห่างจากเป้าหมาย ${diff})</li></ul>
-            `;
-          }
-        } else {
-          document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
-        }
-        activeWorkers = [];
-        isCalculating = false;
+      if (data.closest && (!closestResult || data.closest.diff < smallestDiff)) { smallestDiff=data.closest.diff; closestResult=data.closest; window.closestResultOnCancel=closestResult; }
+      // batch finished
+      const batchSize = (worker._batchEnd - worker._batchStart);
+      completedPerms += batchSize; inProgress.delete(worker);
+      updateUI(true);
+      if (finalizeIfDone()) return;
+      assignBatch(worker);
+      if (nextIndex >= totalPerms && !inProgress.has(worker)){ // no more work assigned to this worker
+        workersFinished++;
       }
     };
-
-    worker.onerror = function() {
-      workersFinished++;
-      worker.terminate();
-      activeWorkers = activeWorkers.filter(x => x !== worker);
-      if (workersFinished === workers.length) {
-        document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
-        activeWorkers = [];
-        isCalculating = false;
-      }
-    };
-
-    worker.postMessage({
-      type: 'findAllRange',
-      permutations,
-      start,
-      end,
-      target,
-      nums,
-      operatorFlags,
-      useIntegerMode,
-      MAX_SQRT_DEPTH,
-      MAX_FACT_DEPTH,
-      MAX_FACTORIAL_INPUT,
-      MAX_RESULTS: Infinity
-    });
+    worker.onerror = function(){ inProgress.delete(worker); completedPerms += (worker._batchEnd - worker._batchStart)||0; updateUI(true); if(!finalizeIfDone()) assignBatch(worker); };
+    assignBatch(worker);
   }
 }
 
