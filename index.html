@@ -238,16 +238,95 @@ function updateFastAccuracyLabel(){
 }
 // init label once
 updateFastAccuracyLabel();
-// Add press/release animation classes for refined glass slider
+
 (function(){
   const slider = document.getElementById('fast-accuracy-slider');
   if(!slider) return;
-  let down=false;
-  function press(){ down=true; slider.classList.remove('glass-release'); slider.offsetHeight; slider.classList.add('glass-press'); }
-  function release(){ if(!down) return; down=false; slider.classList.remove('glass-press'); slider.classList.add('glass-release'); }
-  slider.addEventListener('pointerdown', press, {passive:true});
-  window.addEventListener('pointerup', release, {passive:true});
-  window.addEventListener('pointercancel', release, {passive:true});
+  
+
+  let down = false;
+  function press(){ down = true; slider.classList.remove('glass-release'); slider.offsetHeight; slider.classList.add('glass-press'); }
+  function release(){ if(!down) return; down = false; slider.classList.remove('glass-press'); slider.classList.add('glass-release'); }
+  
+
+  let lastX = null; let lastT = null; let velocity = 0; let active = false; let decayRaf = null;
+  const MAX_ABS_V = 3200;
+  const MIN_ABS_V = 18;
+  const BASE_STRETCH = 0.22;
+  const DECAY = 0.88; 
+
+  function applyStretch(v){
+    const mag = Math.min(MAX_ABS_V, Math.max(-MAX_ABS_V, v));
+    const am = Math.abs(mag);
+    if(am < MIN_ABS_V){ 
+      slider.style.setProperty('--vel-scale-x', '1'); 
+      slider.style.setProperty('--vel-scale-y','1'); 
+      return; 
+    }
+    const norm = am / MAX_ABS_V;
+    const stretch = 1 + BASE_STRETCH * norm;
+    const squash = 1 - BASE_STRETCH * 0.6 * norm;
+    slider.style.setProperty('--vel-scale-x', stretch.toFixed(4));
+    slider.style.setProperty('--vel-scale-y', squash.toFixed(4));
+  }
+
+  function decay(){
+    if(!active && Math.abs(velocity) < MIN_ABS_V){ 
+      slider.style.setProperty('--vel-scale-x','1'); 
+      slider.style.setProperty('--vel-scale-y','1'); 
+      decayRaf = null; return; 
+    }
+    velocity *= DECAY;
+    applyStretch(velocity);
+    decayRaf = requestAnimationFrame(decay);
+  }
+
+  function getClientX(e){ return e.touches ? e.touches[0].clientX : e.clientX; }
+
+  function pointerDown(e){ 
+    active = true; 
+    lastX = getClientX(e); 
+    lastT = performance.now(); 
+    velocity = 0; 
+    if(decayRaf){ cancelAnimationFrame(decayRaf); decayRaf = null; }
+    press();
+  }
+  
+  function pointerMove(e){ 
+    if(!active) return; 
+    const now = performance.now(); 
+    const dt = (now - lastT) / 1000; 
+    const x = getClientX(e); 
+    if(lastX != null && dt > 0){ 
+      const dx = x - lastX; 
+      velocity = dx / dt; 
+      applyStretch(velocity); 
+    } 
+    lastX = x; lastT = now; 
+  }
+  
+  function pointerUp(){ 
+    if(!active) return; 
+    active = false; 
+    release();
+    if(decayRaf) cancelAnimationFrame(decayRaf); 
+    decayRaf = requestAnimationFrame(decay); 
+  }
+
+  // Multi-event support for cross-platform compatibility
+  slider.addEventListener('pointerdown', pointerDown, {passive: true});
+  slider.addEventListener('touchstart', pointerDown, {passive: true});
+  slider.addEventListener('mousedown', pointerDown, {passive: true});
+  
+  window.addEventListener('pointermove', pointerMove, {passive: true});
+  window.addEventListener('touchmove', pointerMove, {passive: true});
+  window.addEventListener('mousemove', pointerMove, {passive: true});
+  
+  window.addEventListener('pointerup', pointerUp, {passive: true});
+  window.addEventListener('touchend', pointerUp, {passive: true});
+  window.addEventListener('mouseup', pointerUp, {passive: true});
+  window.addEventListener('pointercancel', pointerUp, {passive: true});
+  window.addEventListener('touchcancel', pointerUp, {passive: true});
 })();
 
 function toggleIntegerMode() {
