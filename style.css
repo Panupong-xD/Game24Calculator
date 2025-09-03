@@ -1147,3 +1147,42 @@ body.dark-theme .nav-blob {
 .mode-btn:hover {
   filter:none !important;
 }
+
+/* ===== Refined Liquid Glass Slider (Minimal Luxury) ===== */
+/* Override previous colorful slider styles with a neutral frosted glass look */
+#fast-accuracy-slider { all: unset; position: relative; width:100%; height:40px; cursor: pointer; display:block; --thumb-w:58px; --thumb-h:32px; --track-h:18px; --blur-bg:18px; }
+
+/* Base interaction layers */
+#fast-accuracy-slider:focus-visible { outline:none; }
+#fast-accuracy-slider:focus-visible::before { box-shadow: 0 0 0 2px rgba(255,255,255,0.7), 0 0 0 6px rgba(0,113,227,0.35); }
+
+/* Track container */
+#fast-accuracy-slider::before { content:""; position:absolute; left:0; top:50%; transform:translateY(-50%); width:100%; height:var(--track-h); border-radius: 40px; background: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0.28)); backdrop-filter: blur(var(--blur-bg)) saturate(180%); -webkit-backdrop-filter: blur(var(--blur-bg)) saturate(180%); box-shadow: 0 2px 4px rgba(0,0,0,0.15), 0 1px 0 rgba(255,255,255,0.55) inset, 0 -1px 0 rgba(0,0,0,0.15) inset; overflow:hidden; }
+
+/* Subtle moving sheen (optional minimal) */
+#fast-accuracy-slider::after { content:""; position:absolute; left:0; top:50%; transform:translateY(-50%); width:100%; height:var(--track-h); border-radius:40px; background: linear-gradient(120deg, rgba(255,255,255,0.55), rgba(255,255,255,0) 40%, rgba(255,255,255,0.45) 70%, rgba(255,255,255,0) 90%); mix-blend-mode: overlay; opacity:.35; pointer-events:none; animation: sheenMove 8s linear infinite; }
+@keyframes sheenMove { 0%{ background-position:0 0; } 100%{ background-position:200% 0; } }
+
+/* WebKit Thumb */
+#fast-accuracy-slider::-webkit-slider-thumb { -webkit-appearance:none; appearance:none; position:relative; z-index:2; width:var(--thumb-w); height:var(--thumb-h); border-radius: 26px; background: linear-gradient(150deg, rgba(255,255,255,0.85), rgba(255,255,255,0.55) 55%, rgba(255,255,255,0.35)); box-shadow: 0 4px 14px -4px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.65) inset, 0 0 0 6px rgba(255,255,255,0.08) inset; backdrop-filter: blur(30px) saturate(200%); -webkit-backdrop-filter: blur(30px) saturate(200%); transition: transform .5s cubic-bezier(.25,1.6,.32,1), box-shadow .6s ease, background .6s ease; }
+
+/* Firefox Thumb */
+#fast-accuracy-slider::-moz-range-thumb { width:var(--thumb-w); height:var(--thumb-h); border:none; border-radius:26px; background: linear-gradient(150deg, rgba(255,255,255,0.85), rgba(255,255,255,0.55) 55%, rgba(255,255,255,0.35)); box-shadow: 0 4px 14px -4px rgba(0,0,0,0.35), 0 2px 4px rgba(0,0,0,0.25), 0 0 0 1px rgba(255,255,255,0.65) inset, 0 0 0 6px rgba(255,255,255,0.08) inset; backdrop-filter: blur(30px) saturate(200%); -webkit-backdrop-filter: blur(30px) saturate(200%); transition: transform .5s cubic-bezier(.25,1.6,.32,1), box-shadow .6s ease, background .6s ease; cursor:grab; }
+
+#fast-accuracy-slider.glass-press::-webkit-slider-thumb, #fast-accuracy-slider.glass-press::-moz-range-thumb { transform: scale(1.18,.86); box-shadow: 0 6px 18px -4px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.75) inset, 0 0 0 10px rgba(255,255,255,0.1) inset; }
+#fast-accuracy-slider.glass-release::-webkit-slider-thumb, #fast-accuracy-slider.glass-release::-moz-range-thumb { animation: thumbRelease .55s cubic-bezier(.25,1.55,.45,1) forwards; }
+
+@keyframes thumbRelease { 0% { transform: scale(1.18,.86); } 42% { transform: scale(.9,1.15); } 72% { transform: scale(1.05,.95); } 100% { transform: scale(1,1); } }
+
+#fast-accuracy-slider:active::-webkit-slider-thumb { cursor:grabbing; }
+#fast-accuracy-slider:active::-moz-range-thumb { cursor:grabbing; }
+
+/* Dark theme adjustments */
+body.dark-theme #fast-accuracy-slider::before { background: linear-gradient(180deg, rgba(255,255,255,0.32), rgba(255,255,255,0.12)); box-shadow: 0 2px 4px rgba(0,0,0,0.55), 0 1px 0 rgba(255,255,255,0.25) inset, 0 -1px 0 rgba(0,0,0,0.55) inset; }
+body.dark-theme #fast-accuracy-slider::-webkit-slider-thumb, body.dark-theme #fast-accuracy-slider::-moz-range-thumb { background: linear-gradient(150deg, rgba(255,255,255,0.55), rgba(255,255,255,0.28) 60%, rgba(255,255,255,0.15)); box-shadow: 0 4px 14px -4px rgba(0,0,0,0.65), 0 2px 4px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,255,255,0.35) inset, 0 0 0 6px rgba(255,255,255,0.06) inset; }
+body.dark-theme #fast-accuracy-slider.glass-press::-webkit-slider-thumb, body.dark-theme #fast-accuracy-slider.glass-press::-moz-range-thumb { box-shadow: 0 6px 18px -4px rgba(0,0,0,0.75), 0 0 0 1px rgba(255,255,255,0.5) inset, 0 0 0 10px rgba(255,255,255,0.06) inset; }
+
+/* Label refinement */
+.fast-accuracy-container label { letter-spacing:1.2px; font-size:0.68rem !important; font-weight:600; opacity:.75; text-transform:uppercase; }
+#fast-accuracy-label { background: linear-gradient(120deg, var(--text-primary), var(--text-secondary)); -webkit-background-clip:text; background-clip:text; color:transparent; font-weight:600; letter-spacing:.6px; filter:none; }
+/* ===== End Refined Slider ===== */

@@ -85,6 +85,11 @@
                 </div>
               </div>
               <button id="toggleFastModeBtn" onclick="toggleFastMode()" class="toggle-btn mode-btn">เปิดโหมดหาคำตอบเร็ว</button>
+              <div id="fast-accuracy-container" class="fast-accuracy-container" style="display:none; margin-top:8px;">
+                <label for="fast-accuracy-slider" style="display:block; font-size:0.9rem; margin-bottom:4px;">ปรับสมดุล: ความเร็ว ←→ ความแม่น</label>
+                <input type="range" id="fast-accuracy-slider" min="0" max="100" value="60" oninput="updateFastAccuracyLabel()" />
+                <div id="fast-accuracy-label" style="font-size:0.8rem; margin-top:2px; opacity:0.8;">สมดุล (60)</div>
+              </div>
               <button id="toggleIntegerModeBtn" onclick="toggleIntegerMode()" class="toggle-btn mode-btn">เปิดโหมดจำนวนเต็ม</button>
             </div>
             
@@ -123,6 +128,8 @@ function showPage(pageId, sourceBtn=null) {
 let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false };
 let useFastMode = false;
 let useIntegerMode = false;
+// Added: speed-accuracy tuning (0=สุดเร็ว,1=สุดแม่น)
+let fastAccuracy = 0.60; // default bias to slightly accuracy
 let isCalculating = false;
 let cancelCalculation = false;
 let activeWorkers = [];
@@ -202,14 +209,46 @@ window.addEventListener('load', ()=> setTimeout(updateNavBlob,50));
 function toggleFastMode() {
   useFastMode = !useFastMode;
   const btn = document.getElementById("toggleFastModeBtn");
+  const container = document.getElementById('fast-accuracy-container');
   if (useFastMode) {
     btn.textContent = "ปิดโหมดหาคำตอบเร็ว";
     btn.classList.add('active-mode');
+    container.style.display = 'block';
   } else {
     btn.textContent = "เปิดโหมดหาคำตอบเร็ว";
     btn.classList.remove('active-mode');
+    container.style.display = 'none';
   }
 }
+function updateFastAccuracyLabel(){
+  const slider = document.getElementById('fast-accuracy-slider');
+  if(!slider) return;
+  fastAccuracy = slider.value/100; // 0..1
+  // sync filled gradient length
+  slider.style.setProperty('--progress', fastAccuracy.toString());
+  let txt;
+  if(fastAccuracy < 0.15) txt='เร็วที่สุด';
+  else if(fastAccuracy < 0.35) txt='เร็วมาก';
+  else if(fastAccuracy < 0.55) txt='ค่อนข้างเร็ว';
+  else if(fastAccuracy < 0.70) txt='สมดุล';
+  else if(fastAccuracy < 0.85) txt='ค่อนข้างแม่น';
+  else if(fastAccuracy < 0.95) txt='แม่นมาก';
+  else txt='แม่นสูงสุด';
+  document.getElementById('fast-accuracy-label').textContent = `${txt} (${slider.value})`;
+}
+// init label once
+updateFastAccuracyLabel();
+// Add press/release animation classes for refined glass slider
+(function(){
+  const slider = document.getElementById('fast-accuracy-slider');
+  if(!slider) return;
+  let down=false;
+  function press(){ down=true; slider.classList.remove('glass-release'); slider.offsetHeight; slider.classList.add('glass-press'); }
+  function release(){ if(!down) return; down=false; slider.classList.remove('glass-press'); slider.classList.add('glass-release'); }
+  slider.addEventListener('pointerdown', press, {passive:true});
+  window.addEventListener('pointerup', release, {passive:true});
+  window.addEventListener('pointercancel', release, {passive:true});
+})();
 
 function toggleIntegerMode() {
   useIntegerMode = !useIntegerMode;
@@ -505,23 +544,21 @@ function findSolutions() {
 }
 
 function findFirstSolutionFast(nums, target) {
+  // ...existing code before creating workers...
   const numWorkers = navigator.hardwareConcurrency || 4;
   const workers = [];
   let found = false;
-
   calculationCache.clear();
   expressionCache.clear();
-
   const workerPromises = [];
   for (let i = 0; i < numWorkers; i++) {
     const worker = new Worker('worker.js');
     workers.push(worker);
     activeWorkers.push(worker);
-
     const promise = new Promise((resolve) => {
       worker.onmessage = function(e) {
+        // ...existing code...
         if (e.data.found && !found) {
-          found = true;
           const { expression, result } = e.data;
           document.getElementById("results").innerHTML = `<h2>ผลลัพธ์:</h2><ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)}</li></ul>`;
           terminateWorkers(workers);
@@ -548,15 +585,9 @@ function findFirstSolutionFast(nums, target) {
         }
         resolve();
       };
-
-      worker.onerror = function(err) {
-        document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
-        resolve();
-      };
+      worker.onerror = function(){ document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>"; resolve(); };
     });
-
     workerPromises.push(promise);
-
     worker.postMessage({
       type: 'findFirstFast',
       nums,
@@ -565,21 +596,11 @@ function findFirstSolutionFast(nums, target) {
       useIntegerMode,
       MAX_SQRT_DEPTH,
       MAX_FACT_DEPTH,
-      MAX_FACTORIAL_INPUT
+      MAX_FACTORIAL_INPUT,
+      speedAccuracy: fastAccuracy // NEW tuning parameter
     });
   }
-
-  Promise.all(workerPromises).then(() => {
-    if (!found) document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ต้องการ</h2>";
-    terminateWorkers(workers);
-    activeWorkers = [];
-    isCalculating = false;
-  }).catch((error) => {
-    document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>";
-    terminateWorkers(workers);
-    activeWorkers = [];
-    isCalculating = false;
-  });
+  Promise.all(workerPromises).then(()=>{ if(!found) document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ต้องการ</h2>"; terminateWorkers(workers); activeWorkers=[]; isCalculating=false; }).catch(()=>{ document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>"; terminateWorkers(workers); activeWorkers=[]; isCalculating=false; });
 }
 
 function cancelAllWorkers() {
