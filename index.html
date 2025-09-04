@@ -242,91 +242,74 @@ updateFastAccuracyLabel();
 (function(){
   const slider = document.getElementById('fast-accuracy-slider');
   if(!slider) return;
-  
 
-  let down = false;
-  function press(){ down = true; slider.classList.remove('glass-release'); slider.offsetHeight; slider.classList.add('glass-press'); }
-  function release(){ if(!down) return; down = false; slider.classList.remove('glass-press'); slider.classList.add('glass-release'); }
-  
+  const isiOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform==='MacIntel' && navigator.maxTouchPoints>1);
 
-  let lastX = null; let lastT = null; let velocity = 0; let active = false; let decayRaf = null;
-  const MAX_ABS_V = 3200;
+  // Internal state
+  let isDown = false; let lastX=null; let lastT=null; let velocity=0; let rafDecay=null; let frame=null;
+  const MAX_ABS_V = 3200; // clamp
   const MIN_ABS_V = 18;
-  const BASE_STRETCH = 0.22;
-  const DECAY = 0.88; 
+  const BASE_STRETCH = 0.24; // magnitude scaling
+  const DECAY = 0.88; // velocity decay per frame
+  let recoilAnimating=false, recoilStart=0; const RECOIL_MS=380;
 
-  function applyStretch(v){
-    const mag = Math.min(MAX_ABS_V, Math.max(-MAX_ABS_V, v));
-    const am = Math.abs(mag);
-    if(am < MIN_ABS_V){ 
-      slider.style.setProperty('--vel-scale-x', '1'); 
-      slider.style.setProperty('--vel-scale-y','1'); 
-      return; 
-    }
-    const norm = am / MAX_ABS_V;
-    const stretch = 1 + BASE_STRETCH * norm;
-    const squash = 1 - BASE_STRETCH * 0.6 * norm;
-    slider.style.setProperty('--vel-scale-x', stretch.toFixed(4));
-    slider.style.setProperty('--vel-scale-y', squash.toFixed(4));
+  function setVar(name,val){ slider.style.setProperty(name,val); }
+  function startRecoil(){
+    recoilAnimating=true; recoilStart=performance.now();
+    // initial overshoot (tall & narrow)
+    setVar('--recoil-x','0.78');
+    setVar('--recoil-y','1.22');
+    requestAnimationFrame(stepRecoil);
+  }
+  function stepRecoil(){
+    if(!recoilAnimating) return;
+    const now=performance.now();
+    const t=Math.min(1,(now-recoilStart)/RECOIL_MS);
+    // ease out elastic-ish
+    // custom curve: blend of easeOutCubic and small damping oscillation
+    const ease = 1 - Math.pow(1-t,3);
+    // damp oscillation factor
+    const osc = Math.sin(t*3.4*Math.PI) * (1-t)*0.12;
+    const targetX = 1; const startX=0.78; const currentX = startX + (targetX-startX)*ease + osc;
+    const targetY = 1; const startY=1.22; const currentY = startY + (targetY-startY)*ease - osc*0.85;
+    setVar('--recoil-x', currentX.toFixed(4));
+    setVar('--recoil-y', currentY.toFixed(4));
+    if(t>=1){ recoilAnimating=false; setVar('--recoil-x','1'); setVar('--recoil-y','1'); return; }
+    requestAnimationFrame(stepRecoil);
   }
 
-  function decay(){
-    if(!active && Math.abs(velocity) < MIN_ABS_V){ 
-      slider.style.setProperty('--vel-scale-x','1'); 
-      slider.style.setProperty('--vel-scale-y','1'); 
-      decayRaf = null; return; 
-    }
-    velocity *= DECAY;
-    applyStretch(velocity);
-    decayRaf = requestAnimationFrame(decay);
-  }
+  function press(){ slider.classList.remove('glass-release'); slider.offsetHeight; slider.classList.add('glass-press'); }
+  function release(){ slider.classList.remove('glass-press'); slider.classList.add('glass-release'); startRecoil(); }
 
-  function getClientX(e){ return e.touches ? e.touches[0].clientX : e.clientX; }
+  function getClientX(e){ return e.touches? e.touches[0].clientX : e.clientX; }
 
-  function pointerDown(e){ 
-    active = true; 
-    lastX = getClientX(e); 
-    lastT = performance.now(); 
-    velocity = 0; 
-    if(decayRaf){ cancelAnimationFrame(decayRaf); decayRaf = null; }
-    press();
-  }
-  
-  function pointerMove(e){ 
-    if(!active) return; 
-    const now = performance.now(); 
-    const dt = (now - lastT) / 1000; 
-    const x = getClientX(e); 
-    if(lastX != null && dt > 0){ 
-      const dx = x - lastX; 
-      velocity = dx / dt; 
-      applyStretch(velocity); 
-    } 
-    lastX = x; lastT = now; 
-  }
-  
-  function pointerUp(){ 
-    if(!active) return; 
-    active = false; 
-    release();
-    if(decayRaf) cancelAnimationFrame(decayRaf); 
-    decayRaf = requestAnimationFrame(decay); 
-  }
+  function pointerDown(e){ if(isDown) return; isDown=true; lastX=getClientX(e); lastT=performance.now(); velocity=0; if(rafDecay) cancelAnimationFrame(rafDecay); rafDecay=null; press(); }
+  function pointerMove(e){ if(!isDown) return; const now=performance.now(); const x=getClientX(e); const dt=(now-lastT)/1000; if(lastX!=null && dt>0){ const dx=x-lastX; velocity = dx/dt; applyStretch(velocity); } lastX=x; lastT=now; }
+  function pointerUp(){ if(!isDown) return; isDown=false; release(); if(rafDecay) cancelAnimationFrame(rafDecay); rafDecay=requestAnimationFrame(decay); }
 
-  // Multi-event support for cross-platform compatibility
-  slider.addEventListener('pointerdown', pointerDown, {passive: true});
-  slider.addEventListener('touchstart', pointerDown, {passive: true});
-  slider.addEventListener('mousedown', pointerDown, {passive: true});
-  
-  window.addEventListener('pointermove', pointerMove, {passive: true});
-  window.addEventListener('touchmove', pointerMove, {passive: true});
-  window.addEventListener('mousemove', pointerMove, {passive: true});
-  
-  window.addEventListener('pointerup', pointerUp, {passive: true});
-  window.addEventListener('touchend', pointerUp, {passive: true});
-  window.addEventListener('mouseup', pointerUp, {passive: true});
-  window.addEventListener('pointercancel', pointerUp, {passive: true});
-  window.addEventListener('touchcancel', pointerUp, {passive: true});
+  // Update progress custom property for blue tube (since native range won't update our gradient automatically in all engines)
+  function syncProgress(){ const val=parseFloat(slider.value||0); const min=parseFloat(slider.min||0); const max=parseFloat(slider.max||100); const ratio=(val-min)/(max-min); setVar('--progress', ratio.toString()); }
+  slider.addEventListener('input', syncProgress, {passive:true});
+  syncProgress();
+
+  // Events (support pointer + touch + mouse)
+  slider.addEventListener('pointerdown', pointerDown, {passive:true});
+  slider.addEventListener('touchstart', pointerDown, {passive:true});
+  slider.addEventListener('mousedown', pointerDown, {passive:true});
+
+  window.addEventListener('pointermove', pointerMove, {passive:true});
+  window.addEventListener('touchmove', pointerMove, {passive:true});
+  window.addEventListener('mousemove', pointerMove, {passive:true});
+
+  window.addEventListener('pointerup', pointerUp, {passive:true});
+  window.addEventListener('touchend', pointerUp, {passive:true});
+  window.addEventListener('mouseup', pointerUp, {passive:true});
+  window.addEventListener('touchcancel', pointerUp, {passive:true});
+
+  // iOS direct transform fallback if CSS var scaling jank detected
+  if(isiOS){
+    // Attempt heuristic: adapt transforms via style injection each frame (here our slider thumb isn't a direct element we can easily select; for WebKit we rely on pseudo element). We'll keep CSS variable method; Safari 16+ handles it. If needed, future enhancement could use overlay custom thumb.
+  }
 })();
 
 function toggleIntegerMode() {
