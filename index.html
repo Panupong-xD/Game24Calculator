@@ -59,6 +59,7 @@
                 <button id="toggleDivBtn" class="toggle-btn" onclick="toggleOperator('/')">เปิดการใช้ ÷</button>
                 <button id="toggleModBtn" class="toggle-btn" onclick="toggleOperator('%')">เปิดการใช้ mod</button>
                 <button id="togglePowBtn" class="toggle-btn" onclick="toggleOperator('^')">เปิดการใช้ ^</button>
+                <button id="toggleConcatBtn" class="toggle-btn" onclick="toggleOperator('||')">เปิดการใช้ concat</button>
                 <button id="toggleSqrtBtn" class="toggle-btn" onclick="toggleOperator('√')">เปิดการใช้ √</button>
                 <div id="sqrt-depth-container" class="sqrt-depth-container">
                   <label for="sqrt-depth">ระดับการซ้อน √ สูงสุด: </label>
@@ -125,7 +126,7 @@ function showPage(pageId, sourceBtn=null) {
 }
 
 // Core variables
-let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false };
+let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false };
 let useFastMode = false;
 let useIntegerMode = false;
 // Added: speed-accuracy tuning (0=สุดเร็ว,1=สุดแม่น)
@@ -157,12 +158,13 @@ function displayOperatorLabel(op){
   if(op==='*') return '×';
   if(op=== '/') return '÷';
   if(op=== '%') return 'mod';
+  if(op==='||') return 'concat';
   return op;
 }
 
 function toggleOperator(op) {
   operatorFlags[op] = !operatorFlags[op];
-  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : 'Fact'}Btn`);
+  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : op === '!' ? 'Fact' : op === '||' ? 'Concat' : 'UNKNOWN'}Btn`);
   const disp = displayOperatorLabel(op);
   if (operatorFlags[op]) {
     btn.textContent = `ปิดการใช้ ${disp}`;
@@ -418,6 +420,13 @@ function evaluateAST(node) {
       case "!": 
         result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? window.wasmMath.factorial(rightVal) : NaN; 
         break;
+      case "||": {
+        // concat: only allow non-negative integers to avoid ambiguous decimal merges
+        if(!operatorFlags['||']) { result = NaN; break; }
+        if(!Number.isInteger(leftVal) || !Number.isInteger(rightVal) || leftVal < 0 || rightVal < 0) { result = NaN; break; }
+        const concatVal = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal)));
+        result = concatVal;
+        break; }
       default: return NaN;
     }
   } else {
@@ -437,6 +446,11 @@ function evaluateAST(node) {
         break;
       case "√": result = operatorFlags['√'] && rightVal >= 0 ? Math.sqrt(rightVal) : NaN; break;
       case "!": result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? factorial(rightVal) : NaN; break;
+      case "||": {
+        if(!operatorFlags['||']) { result = NaN; break; }
+        if(!Number.isInteger(leftVal) || !Number.isInteger(rightVal) || leftVal < 0 || rightVal < 0) { result = NaN; break; }
+        result = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal)));
+        break; }
       default: return NaN;
     }
   }
@@ -783,21 +797,24 @@ function findAllSolutionsParallel(nums, target) {
   }
 
   function aggregateProcessed(){
-    let inProgSum = 0; inProgress.forEach(v=> inProgSum += v);
+    // เดิม: รวมค่าทั้งหมดตรงๆ ซึ่งถ้า inProgress มี NaN จะกลายเป็น NaN ทั้งก้อน
+    // ปรับ: ข้ามค่าที่ไม่เป็นตัวเลขหรือไม่ finite เพื่อกัน NaN% ใน UI
+    let inProgSum = 0; inProgress.forEach(v=> { if(Number.isFinite(v)) inProgSum += v; });
     return completedPerms + inProgSum;
   }
 
   function updateUI(force=false){
     const now = performance.now(); if(!force && now - lastUIUpdate < 80) return; lastUIUpdate = now;
     const processed = aggregateProcessed();
-    const percent = Math.round((processed/totalPerms)*100);
+    const safeProcessed = Number.isFinite(processed)? processed : completedPerms; // กัน NaN ตกค้าง
+    const percent = totalPerms>0 ? Math.round((safeProcessed/totalPerms)*100) : 0;
     let closestText = "ยังไม่พบ";
     if (closestResult){
       if (Math.abs(closestResult.diff) <= EXACT_EPS) closestText = `${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ตรงเป๊ะ)`;
       else closestText = `${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ห่างจากเป้าหมาย ${formatNumber(closestResult.diff)})`;
     }
     document.getElementById("results").innerHTML = `
-      <h2>กำลังคำนวณ... ${percent}% (${processed}/${totalPerms})</h2>
+      <h2>กำลังคำนวณ... ${percent}% (${safeProcessed}/${totalPerms})</h2>
       <p>ผลลัพธ์ที่ใกล้เคียงที่สุด: ${closestText}</p>
       <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
     `;
@@ -836,8 +853,10 @@ function findAllSolutionsParallel(nums, target) {
     const worker = new Worker('worker.js'); activeWorkers.push(worker);
     worker.onmessage = function(e){ if(cancelCalculation) return; const data=e.data;
       if (data.progress){
-        // data.processed is within current batch (1..batchSize)
-        inProgress.set(worker, Math.min(data.processed, (worker._batchEnd - worker._batchStart)));
+        // ป้องกัน NaN: ตั้งค่าเฉพาะเมื่อมีตัวเลข processed ส่งมาจริง
+        if (typeof data.processed === 'number' && Number.isFinite(data.processed)) {
+          inProgress.set(worker, Math.min(data.processed, (worker._batchEnd - worker._batchStart)));
+        }
         if (data.closest && (!closestResult || data.closest.diff < smallestDiff)) { smallestDiff=data.closest.diff; closestResult=data.closest; window.closestResultOnCancel=closestResult; }
         updateUI();
         return;
@@ -967,6 +986,7 @@ function prettyPrintExpression(expr) {
     .replace(/√\(([^(\)]+)\)/g, '√$1');
   s = s.replace(/\(([^(\)]+)\s\^\s([^\(\)]+)\)/g, '$1^$2');
   s = s.replace(/\*/g, '×').replace(/\//g, '÷').replace(/%/g, ' mod ');
+  // keep || as is, or could replace with ⧺ later
   s = s.replace(/\(([0-9]+)\)/g, '$1');
   while (
     s.startsWith('(') &&
@@ -1076,9 +1096,9 @@ function initNavDrag(){
   function pointerDown(e){ if(dragging) return; if(e.type==='mousedown' && e.button!==0) return; const targetBtn = e.target.closest('.nav-btn'); if(!targetBtn) return; pointerId = e.pointerId || (e.touches? e.touches[0].identifier: 'touch'); dragging=true; switchEl.classList.add('dragging'); const parentRect = switchEl.getBoundingClientRect(); startX = (e.touches? e.touches[0].clientX : e.clientX); const blobRect = blob.getBoundingClientRect(); blobStart = blobRect.left - parentRect.left; currentIndex = buttons.indexOf(targetBtn); e.preventDefault(); }
   function pointerMove(e){ if(!dragging) return; const clientX = (e.touches? e.touches[0].clientX : e.clientX); const parentRect = switchEl.getBoundingClientRect(); const delta = clientX - startX; const rawX = blobStart + delta; const maxX = parentRect.width - blob.offsetWidth - 4; const x = clamp(rawX, 0, maxX); blob.style.setProperty('--blob-x', x + 'px'); if(framePending) return; framePending=true; requestAnimationFrame(()=>{ framePending=false; // determine nearest index based on center
       const blobCenter = x + blob.offsetWidth/2; let nearest = 0; let best=Infinity; buttons.forEach((btn,i)=>{ const r=btn.getBoundingClientRect(); const c = r.left - parentRect.left + r.width/2; const d=Math.abs(c-blobCenter); if(d<best){ best=d; nearest=i; }}); currentIndex = nearest; }); }
-  function pointerUp(){ if(!dragging) return; dragging=false; switchEl.classList.remove('dragging'); positionBlobTo(currentIndex,true); if(currentIndex!==activeIndex){ activeIndex=currentIndex; setActive(activeIndex); } else { // ensure sync even if same index
-    setActive(activeIndex);
-  } }
+  function pointerUp(){ if(!dragging) return; dragging=false; release(); if(rafDecay) cancelAnimationFrame(rafDecay); rafDecay=requestAnimationFrame(decay); }
+
+  // Cancel drag on window events
   function cancelDrag(){ if(!dragging) return; dragging=false; switchEl.classList.remove('dragging'); positionBlobTo(activeIndex,true); }
 
   switchEl.addEventListener('mousedown', pointerDown, {passive:false});
