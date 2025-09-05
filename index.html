@@ -224,6 +224,7 @@ function updateFastAccuracyLabel(){
   const slider = document.getElementById('fast-accuracy-slider');
   if(!slider) return;
   fastAccuracy = slider.value/100; // 0..1
+  const timeBudgetSec = (slider.value/5).toFixed(2); // explicit mapping 0..20s
   // sync filled gradient length
   slider.style.setProperty('--progress', fastAccuracy.toString());
   let txt;
@@ -234,7 +235,8 @@ function updateFastAccuracyLabel(){
   else if(fastAccuracy < 0.85) txt='ค่อนข้างแม่น';
   else if(fastAccuracy < 0.95) txt='แม่นมาก';
   else txt='แม่นสูงสุด';
-  document.getElementById('fast-accuracy-label').textContent = `${txt} (${slider.value})`;
+  // Show explicit time budget mapping
+  document.getElementById('fast-accuracy-label').textContent = `${txt} (${slider.value}) • เวลา ≤ ${timeBudgetSec}s`;
 }
 // init label once
 updateFastAccuracyLabel();
@@ -606,48 +608,82 @@ function findSolutions() {
 }
 
 function findFirstSolutionFast(nums, target) {
-  // ...existing code before creating workers...
+  // explicit wall-clock time budget derived from slider: (value/5) seconds
+  const slider = document.getElementById('fast-accuracy-slider');
+  const sliderVal = slider ? parseInt(slider.value) : Math.round(fastAccuracy*100);
+  const timeBudgetMs = (sliderVal/5)*1000; // 0..20000ms
+  const maxSeconds = (timeBudgetMs/1000).toFixed(2);
+
   const numWorkers = navigator.hardwareConcurrency || 4;
   const workers = [];
   let found = false;
+  let globalClosest = null; // accumulate best from all workers
   calculationCache.clear();
   expressionCache.clear();
   const workerPromises = [];
+
+  // initial UI state for fast mode with time budget
+  document.getElementById("results").innerHTML = `
+    <h2>โหมดเร็ว: กำลังค้นหา (จำกัดเวลา ≤ ${maxSeconds}s)</h2>
+    <p>กำลังประมวลผลหลายเธรด...</p>
+    <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
+  `;
+
+  function updateProgressUI(){
+    if(found) return;
+    if(!globalClosest){
+      document.getElementById("results").innerHTML = `
+        <h2>โหมดเร็ว: กำลังค้นหา (≤ ${maxSeconds}s)</h2>
+        <p>ยังไม่พบคำตอบใกล้เคียง</p>
+        <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>`;
+      return;
+    }
+    const diff = globalClosest.diff;
+    const EXACT_EPS = 1e-12;
+    const status = diff <= EXACT_EPS ? '(ตรงเป๊ะ – เตรียมสรุป)' : `(ห่าง ${formatNumber(diff)})`;
+    document.getElementById("results").innerHTML = `
+      <h2>โหมดเร็ว: กำลังค้นหา (≤ ${maxSeconds}s)</h2>
+      <p>คำตอบใกล้สุด: ${prettyPrintExpression(globalClosest.expression)} = ${formatNumber(globalClosest.result)} ${status}</p>
+      <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>`;
+  }
+
   for (let i = 0; i < numWorkers; i++) {
     const worker = new Worker('worker.js');
     workers.push(worker);
     activeWorkers.push(worker);
     const promise = new Promise((resolve) => {
       worker.onmessage = function(e) {
-        // ...existing code...
+        if(found) { resolve(); return; }
+        if(e.data.progress){
+          // progressive closest candidate update
+            if(e.data.closest && (!globalClosest || e.data.closest.diff < globalClosest.diff)) {
+              globalClosest = e.data.closest;
+              window.closestResultOnCancel = globalClosest; // allow showing best if cancelled
+              updateProgressUI();
+            }
+            return; // do not resolve yet
+        }
         if (e.data.found && !found) {
+          found = true;
           const { expression, result } = e.data;
           document.getElementById("results").innerHTML = `<h2>ผลลัพธ์:</h2><ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)}</li></ul>`;
           terminateWorkers(workers);
           activeWorkers = [];
           isCalculating = false;
+          resolve();
         } else if (e.data.closest && !found) {
-          const EXACT_EPS = 1e-12;
-          const { expression, result, diff } = e.data.closest;
-          if (Math.abs(diff) <= EXACT_EPS) {
-            document.getElementById("results").innerHTML = `
-              <h2>ผลลัพธ์:</h2>
-              <ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)} (ตรงเป๊ะ)</li></ul>
-            `;
-          } else {
-            document.getElementById("results").innerHTML = `
-              <h2>ไม่พบคำตอบที่ตรงเป๊ะ</h2>
-              <h3>คำตอบที่ใกล้เคียงที่สุด:</h3>
-              <ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)} (ห่างจากเป้าหมาย ${formatNumber(diff)})</li></ul>
-            `;
+          // final closest from a worker (worker finished its budget)
+          if(!globalClosest || e.data.closest.diff < globalClosest.diff){
+            globalClosest = e.data.closest;
+            window.closestResultOnCancel = globalClosest;
           }
-          terminateWorkers(workers);
-          activeWorkers = [];
-          isCalculating = false;
+          // if all workers will resolve via Promise.all later
+          resolve();
+        } else if (e.data.finished) {
+          resolve();
         }
-        resolve();
       };
-      worker.onerror = function(){ document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>"; resolve(); };
+      worker.onerror = function(){ resolve(); };
     });
     workerPromises.push(promise);
     worker.postMessage({
@@ -659,10 +695,37 @@ function findFirstSolutionFast(nums, target) {
       MAX_SQRT_DEPTH,
       MAX_FACT_DEPTH,
       MAX_FACTORIAL_INPUT,
-      speedAccuracy: fastAccuracy // NEW tuning parameter
+      speedAccuracy: fastAccuracy, // keep heuristic scaling
+      timeBudgetMs // NEW explicit cap
     });
   }
-  Promise.all(workerPromises).then(()=>{ if(!found) document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ต้องการ</h2>"; terminateWorkers(workers); activeWorkers=[]; isCalculating=false; }).catch(()=>{ document.getElementById("results").innerHTML = "<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>"; terminateWorkers(workers); activeWorkers=[]; isCalculating=false; });
+  // periodic UI refresh while waiting
+  const uiInterval = setInterval(()=>{ if(!isCalculating) { clearInterval(uiInterval); return; } updateProgressUI(); }, 250);
+  Promise.all(workerPromises).then(()=>{
+    clearInterval(uiInterval);
+    if(found) return; // already handled
+    if(globalClosest){
+      const EXACT_EPS = 1e-12;
+      if (Math.abs(globalClosest.diff) <= EXACT_EPS) {
+        document.getElementById("results").innerHTML = `
+          <h2>ผลลัพธ์:</h2>
+          <ul><li>${prettyPrintExpression(globalClosest.expression)} = ${formatNumber(globalClosest.result)} (ตรงเป๊ะ)</li></ul>`;
+      } else {
+        document.getElementById("results").innerHTML = `
+          <h2>ไม่พบคำตอบที่ตรงเป๊ะภายใน ${maxSeconds}s</h2>
+          <h3>คำตอบที่ใกล้ที่สุด:</h3>
+          <ul><li>${prettyPrintExpression(globalClosest.expression)} = ${formatNumber(globalClosest.result)} (ห่าง ${formatNumber(globalClosest.diff)})</li></ul>`;
+      }
+    } else {
+      document.getElementById("results").innerHTML = `<h2>ไม่พบคำตอบภายใน ${maxSeconds}s</h2>`;
+    }
+    terminateWorkers(workers);
+    activeWorkers=[];
+    isCalculating=false;
+  }).catch(()=>{
+    clearInterval(uiInterval);
+    document.getElementById("results").innerHTML = `<h2>เกิดข้อผิดพลาดในการคำนวณ</h2>`;
+    terminateWorkers(workers); activeWorkers=[]; isCalculating=false; });
 }
 
 function cancelAllWorkers() {
