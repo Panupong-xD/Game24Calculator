@@ -92,6 +92,7 @@
                 <div id="fast-accuracy-label" style="font-size:0.8rem; margin-top:2px; opacity:0.8;">สมดุล (60)</div>
               </div>
               <button id="toggleIntegerModeBtn" onclick="toggleIntegerMode()" class="toggle-btn mode-btn">เปิดโหมดจำนวนเต็ม</button>
+              <button id="toggleCleanModeBtn" onclick="toggleCleanMode()" class="toggle-btn mode-btn">เปิดโหมดคลีน</button>
             </div>
             
             <div class="option-group">
@@ -129,6 +130,7 @@ function showPage(pageId, sourceBtn=null) {
 let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false };
 let useFastMode = false;
 let useIntegerMode = false;
+let useCleanMode = false; // NEW: efficiency / clean mode
 // Added: speed-accuracy tuning (0=สุดเร็ว,1=สุดแม่น)
 let fastAccuracy = 0.60; // default bias to slightly accuracy
 let isCalculating = false;
@@ -324,6 +326,18 @@ function toggleIntegerMode() {
     btn.classList.add('active-mode');
   } else {
     btn.textContent = "เปิดโหมดจำนวนเต็ม";
+    btn.classList.remove('active-mode');
+  }
+}
+
+function toggleCleanMode(){
+  useCleanMode = !useCleanMode;
+  const btn = document.getElementById('toggleCleanModeBtn');
+  if(useCleanMode){
+    btn.textContent = 'ปิดโหมดคลีน';
+    btn.classList.add('active-mode');
+  } else {
+    btn.textContent = 'เปิดโหมดคลีน';
     btn.classList.remove('active-mode');
   }
 }
@@ -1009,6 +1023,41 @@ function prettyPrintExpression(expr) {
 
 function displayResults(results) {
   if (results.length > 0) {
+    if(useCleanMode){
+      // เลือกคำตอบที่ "คลีน" ที่สุดตามเกณฑ์: ใช้ operator ง่ายที่สุด, จำนวน operator น้อย, วงเล็บน้อย, ความยาวสั้น
+      function computeCleanScore(expr){
+        // expr ยังเป็นรูป canonical (มี *,/,%,^,√,!,||)
+        const original = expr;
+        const protectedExpr = original.replace(/\|\|/g,'§');
+        const ops = protectedExpr.match(/[+\-*\/^%√!§]/g) || [];
+        const opCount = ops.length;
+        const parenCount = (original.match(/\(/g)||[]).length;
+        // กำหนด weight ความซับซ้อน
+        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':3, '^':4, '√':5, '!':5 };
+        let maxWeight = 0; let sumWeight=0; const usedSet=new Set();
+        ops.forEach(o=>{ const w=weightMap[o]||9; if(w>maxWeight) maxWeight=w; sumWeight+=w; usedSet.add(o); });
+        // ใช้ tuple: (maxWeight, sumWeight, opCount, parenCount, length)
+        return { maxWeight, sumWeight, opCount, parenCount, length: original.length };
+      }
+      function betterScore(a,b){
+        if(a.maxWeight!==b.maxWeight) return a.maxWeight - b.maxWeight;
+        if(a.sumWeight!==b.sumWeight) return a.sumWeight - b.sumWeight;
+        if(a.opCount!==b.opCount) return a.opCount - b.opCount;
+        if(a.parenCount!==b.parenCount) return a.parenCount - b.parenCount;
+        return a.length - b.length;
+      }
+      let best = null; let bestScore=null;
+      for(const r of results){
+        const sc = computeCleanScore(r.expression);
+        if(!best || betterScore(sc,bestScore)<0){ best=r; bestScore=sc; }
+      }
+      if(best){
+        document.getElementById("results").innerHTML = `
+          <h2>ผลลัพธ์ที่คลีนที่สุด (จาก ${results.length} แบบ):</h2>
+          <ul><li>${prettyPrintExpression(best.expression)} = ${formatNumber(best.result)}</li></ul>`;
+        return;
+      }
+    }
     document.getElementById("results").innerHTML =
       `<h2>ผลลัพธ์ (${results.length} รายการ):</h2><ul>` +
       results.map((res) => `<li>${prettyPrintExpression(res.expression)} = ${formatNumber(res.result)}</li>`).join("") +
@@ -1037,6 +1086,7 @@ addNumber();
 // Ensure initial input supports decimals
 const firstNum = document.querySelector('.num');
 if (firstNum) firstNum.step = 'any';
+
 
 // Initialize WebAssembly status monitoring
 async function initializeWASM() {
