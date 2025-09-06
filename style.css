@@ -1203,3 +1203,7 @@ body.dark-theme #fast-accuracy-slider.glass-press::-webkit-slider-thumb, body.da
 .fast-accuracy-container label { letter-spacing:1.2px; font-size:0.68rem !important; font-weight:600; opacity:.75; text-transform:uppercase; }
 #fast-accuracy-label { background: linear-gradient(120deg, var(--text-primary), var(--text-secondary)); -webkit-background-clip:text; background-clip:text; color:transparent; font-weight:600; letter-spacing:.6px; filter:none; }
 /* ===== End Refined Slider ===== */
+
+.nav-blob.no-anim {
+  transition: none !important;
+}
