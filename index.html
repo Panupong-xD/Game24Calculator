@@ -741,7 +741,7 @@ function findFirstSolutionFast(nums, target) {
           <ul><li>${prettyPrintExpression(globalClosest.expression)} = ${formatNumber(globalClosest.result)} (ตรงเป๊ะ)</li></ul>`;
       } else {
         document.getElementById("results").innerHTML = `
-          <h2>ไม่พบคำตอบที่ตรงเป๊ะภายใน ${maxSeconds}s</h2>
+          <h2>ไม่พบคำตอบที่ตรงเป๊ะ</h2>
           <h3>คำตอบที่ใกล้ที่สุด:</h3>
           <ul><li>${prettyPrintExpression(globalClosest.expression)} = ${formatNumber(globalClosest.result)} (ห่าง ${formatNumber(globalClosest.diff)})</li></ul>`;
       }
