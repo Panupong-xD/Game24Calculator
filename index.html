@@ -70,7 +70,7 @@
                     id="sqrt-depth"
                     class="sqrt-depth-input"
                     min="1"
-                    value="2"
+                    value="1"
                     onchange="updateMaxSqrtDepth()"
                   />
                 </div>
@@ -85,6 +85,12 @@
                     value="1"
                     onchange="updateMaxFactDepth()"
                   />
+                </div>
+                <!-- NEW log operator -->
+                <button id="toggleLogBtn" class="toggle-btn" onclick="toggleOperator('log')">เปิดการใช้ log</button>
+                <div id="log-depth-container" class="log-depth-container" style="display:none;">
+                  <label for="log-depth">ระดับการซ้อน log สูงสุด: </label>
+                  <input type="number" id="log-depth" class="log-depth-input" min="1" value="1" onchange="updateMaxLogDepth()" />
                 </div>
               </div>
               <button id="toggleFastModeBtn" onclick="toggleFastMode()" class="toggle-btn mode-btn">เปิดโหมดหาคำตอบเร็ว</button>
@@ -121,7 +127,7 @@ function showPage(pageId, sourceBtn=null) {
 }
 
 // Core variables
-let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false, '∑': false }; // added '∑'
+let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false, '∑': false, 'log': false };// added log
 let useFastMode = false;
 let useIntegerMode = false;
 let useCleanMode = false; // NEW: efficiency / clean mode
@@ -130,8 +136,9 @@ let fastAccuracy = 0.60; // default bias to slightly accuracy
 let isCalculating = false;
 let cancelCalculation = false;
 let activeWorkers = [];
-let MAX_SQRT_DEPTH = 2;
+let MAX_SQRT_DEPTH = 1;
 let MAX_FACT_DEPTH = 1;
+let MAX_LOG_DEPTH = 1;
 const MAX_FACTORIAL_INPUT = 12;
 const MAX_RESULTS = 100;
 const CHUNK_SIZE = 20;
@@ -161,18 +168,20 @@ function displayOperatorLabel(op){
 
 function toggleOperator(op) {
   operatorFlags[op] = !operatorFlags[op];
-  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : op === '!' ? 'Fact' : op === '||' ? 'Concat' : op === '∑' ? 'Sum' : 'UNKNOWN'}Btn`);
+  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : op === '!' ? 'Fact' : op === '||' ? 'Concat' : op === '∑' ? 'Sum' : op === 'log' ? 'Log' : 'UNKNOWN'}Btn`);
   const disp = displayOperatorLabel(op);
   if (operatorFlags[op]) {
     btn.textContent = `ปิดการใช้ ${disp}`;
     btn.classList.add('active');
     if (op === '√') document.getElementById("sqrt-depth-container").classList.add("active");
     if (op === '!') document.getElementById("fact-depth-container").style.display = "block";
+    if (op === 'log') document.getElementById('log-depth-container').style.display = 'block';
   } else {
     btn.textContent = `เปิดการใช้ ${disp}`;
     btn.classList.remove('active');
     if (op === '√') document.getElementById("sqrt-depth-container").classList.remove("active");
     if (op === '!') document.getElementById("fact-depth-container").style.display = "none";
+    if (op === 'log') document.getElementById('log-depth-container').style.display = 'none';
   }
 }
 
@@ -352,6 +361,12 @@ function updateMaxFactDepth() {
   else input.value = MAX_FACT_DEPTH;
 }
 
+function updateMaxLogDepth(){
+  const input = document.getElementById('log-depth');
+  const v = parseInt(input.value);
+  if(!isNaN(v) && v>=1) MAX_LOG_DEPTH = v; else input.value = MAX_LOG_DEPTH;
+}
+
 function addNumber() {
   let numbers = document.querySelectorAll(".num-container");
   if (numbers.length < 8) {
@@ -440,6 +455,10 @@ function evaluateAST(node) {
         const n = rightVal - leftVal + 1;
         result = (leftVal + rightVal) * n / 2;
         break; }
+      case "log": {
+        result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN;
+        break;
+      }
       default: return NaN;
     }
   } else {
@@ -464,6 +483,10 @@ function evaluateAST(node) {
         if(!operatorFlags['∑']) { result = NaN; break; }
         if(!Number.isInteger(leftVal) || !Number.isInteger(rightVal) || leftVal > rightVal){ result = NaN; break; }
         const n = rightVal - leftVal + 1; result = (leftVal + rightVal) * n / 2; break; }
+      case "log": {
+        result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN;
+        break;
+      }
       default: return NaN;
     }
   }
@@ -482,6 +505,7 @@ function serializeAST(node) {
   if (node.type === "num") return node.value.toString();
   if (node.operator === "√") return `√(${serializeAST(node.right)})`;
   if (node.operator === "!") return `(${serializeAST(node.right)})!`;
+  if (node.operator === "log") return `log(${serializeAST(node.right)})`;
   return `(${node.left ? serializeAST(node.left) : ""} ${node.operator} ${serializeAST(node.right)})`;
 }
 
@@ -513,6 +537,8 @@ function getFactDepth(node) {
   return Math.max(leftDepth, rightDepth);
 }
 
+function getLogDepth(node){ if(node.type==='num') return 0; if(node.operator==='log') return 1+getLogDepth(node.right); const ld=node.left?getLogDepth(node.left):0; const rd=node.right?getLogDepth(node.right):0; return Math.max(ld,rd); }
+
 function generateAllGroupings(nums, target) {
   const memoized = new Map();
   function generateGroupingsHelper(start, end) {
@@ -527,7 +553,8 @@ function generateAllGroupings(nums, target) {
         for (let i = 1; i <= MAX_SQRT_DEPTH && operatorFlags['√']; i++) {
           currentExpr = { type: "op", operator: "√", left: null, right: currentExpr };
           const sqrtResult = evaluateAST(currentExpr);
-          if (!isNaN(sqrtResult) && (!useIntegerMode || isIntegerResult(sqrtResult))) result.push(currentExpr);
+            if (!isNaN(sqrtResult) && (!useIntegerMode || isIntegerResult(sqrtResult))) result.push(currentExpr);
+            else break;
         }
       }
       if (operatorFlags['!'] && nums[start] >= 0 && nums[start] <= MAX_FACTORIAL_INPUT && Number.isInteger(nums[start])) {
@@ -535,7 +562,16 @@ function generateAllGroupings(nums, target) {
         for (let i = 1; i <= MAX_FACT_DEPTH && operatorFlags['!']; i++) {
           currentExpr = { type: "op", operator: "!", left: null, right: currentExpr };
           const factResult = evaluateAST(currentExpr);
-          if (!isNaN(factResult)) result.push(currentExpr);
+          if (!isNaN(factResult)) result.push(currentExpr); else break;
+        }
+      }
+      // NEW: base case log nesting
+      if (operatorFlags['log'] && nums[start] > 0){
+        let currentExpr = numNode;
+        for(let i=1;i<=MAX_LOG_DEPTH && operatorFlags['log'];i++){
+          currentExpr = { type:'op', operator:'log', left:null, right: currentExpr };
+          const logResult = evaluateAST(currentExpr);
+          if(!isNaN(logResult) && (!useIntegerMode || isIntegerResult(logResult))) result.push(currentExpr); else break;
         }
       }
     } else {
@@ -567,9 +603,7 @@ function generateAllGroupings(nums, target) {
                     for (let depth = 1; depth <= MAX_SQRT_DEPTH - getSqrtDepth(newExpr); depth++) {
                       currentExpr = { type: "op", operator: "√", left: null, right: currentExpr };
                       const sqrtResult = evaluateAST(currentExpr);
-                      if (!isNaN(sqrtResult) && (!useIntegerMode || isIntegerResult(sqrtResult))) {
-                        result.push(currentExpr);
-                      }
+                      if (!isNaN(sqrtResult) && (!useIntegerMode || isIntegerResult(sqrtResult))) result.push(currentExpr); else break;
                     }
                   }
                 }
@@ -580,7 +614,19 @@ function generateAllGroupings(nums, target) {
                     for (let depth = 1; depth <= MAX_FACT_DEPTH - getFactDepth(newExpr); depth++) {
                       currentExpr = { type: "op", operator: "!", left: null, right: currentExpr };
                       const factResult = evaluateAST(currentExpr);
-                      if (!isNaN(factResult)) result.push(currentExpr);
+                      if (!isNaN(factResult)) result.push(currentExpr); else break;
+                    }
+                  }
+                }
+                // NEW: log chaining
+                if (operatorFlags['log'] && getLogDepth(newExpr) < MAX_LOG_DEPTH){
+                  const baseVal = evaluateAST(newExpr);
+                  if(!isNaN(baseVal) && baseVal > 0){
+                    let currentExpr = newExpr;
+                    for(let depth=1; depth <= MAX_LOG_DEPTH - getLogDepth(newExpr); depth++){
+                      currentExpr = { type:'op', operator:'log', left:null, right: currentExpr };
+                      const logResult = evaluateAST(currentExpr);
+                      if(!isNaN(logResult) && (!useIntegerMode || isIntegerResult(logResult))) result.push(currentExpr); else break;
                     }
                   }
                 }
@@ -720,6 +766,7 @@ function findFirstSolutionFast(nums, target) {
       useIntegerMode,
       MAX_SQRT_DEPTH,
       MAX_FACT_DEPTH,
+      MAX_LOG_DEPTH,
       MAX_FACTORIAL_INPUT,
       speedAccuracy: fastAccuracy, // keep heuristic scaling
       timeBudgetMs // NEW explicit cap
@@ -857,7 +904,7 @@ function findAllSolutionsParallel(nums, target) {
 
   function assignBatch(worker){
     if (cancelCalculation) return; if (nextIndex >= totalPerms){ return; }
-    const start = nextIndex; const size = Math.min(baseBatchSize, totalPerms - nextIndex); const end = start + size; nextIndex = end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'findAllRange', permutations, start, end, target, nums, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity });
+    const start = nextIndex; const size = Math.min(baseBatchSize, totalPerms - nextIndex); const end = start + size; nextIndex = end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'findAllRange', permutations, start, end, target, nums, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity });
     if (nextIndex < totalPerms) adaptiveBatchSize();
   }
 
@@ -1024,19 +1071,15 @@ function displayResults(results) {
     if(useCleanMode){
       // เลือกคำตอบที่ "คลีน" ที่สุดตามเกณฑ์: ใช้ operator ง่ายที่สุด, จำนวน operator น้อย, วงเล็บน้อย, ความยาวสั้น
       function computeCleanScore(expr){
-        // expr ยังเป็นรูป canonical (มี *,/,%,^,√,!,||,∑)
-        const original = expr;
-        // ปกป้อง concat (||) ด้วยสัญลักษณ์เดี่ยว § เพื่อให้ง่ายต่อ regex นับ operator
-        const protectedExpr = original.replace(/\|\|/g,'§');
-        // รวม ∑ เข้าไปใน regex เพื่อนับคะแนน
-        const ops = protectedExpr.match(/[+\-*\/^%√!§∑]/g) || [];
+        // Protect concat (||) and log tokens for single-char operator counting
+        const protectedExpr = expr.replace(/\|\|/g,'§').replace(/log(?=\()/g,'Ł');
+        const ops = protectedExpr.match(/[+\-*\/^%√!§∑Ł]/g) || [];
         const opCount = ops.length;
-        const parenCount = (original.match(/\(/g)||[]).length;
-        // ปรับ weightMap: ∑ มีความซับซ้อนสูงกว่า ^ และใกล้เคียงกับ unary ลึกๆ
-        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':4, '^':3, '√':4, '!':5, '∑':5 };
-        let maxWeight = 0; let sumWeight=0; const usedSet=new Set();
-        ops.forEach(o=>{ const w=weightMap[o]||9; if(w>maxWeight) maxWeight=w; sumWeight+=w; usedSet.add(o); });
-        return { maxWeight, sumWeight, opCount, parenCount, length: original.length };
+        const parenCount = (expr.match(/\(/g)||[]).length;
+        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':4, '^':3, '√':4, '!':5, '∑':5, 'Ł':4 };
+        let maxWeight = 0; let sumWeight=0;
+        ops.forEach(o=>{ const w=weightMap[o]||9; if(w>maxWeight) maxWeight=w; sumWeight+=w; });
+        return { maxWeight, sumWeight, opCount, parenCount, length: expr.length };
       }
       function betterScore(a,b){
         if(a.maxWeight!==b.maxWeight) return a.maxWeight - b.maxWeight;

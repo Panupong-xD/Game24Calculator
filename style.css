@@ -254,7 +254,8 @@ input[type="number"],
 .easy-input,
 .num,
 .sqrt-depth-input,
-.fact-depth-input {
+.fact-depth-input,
+.log-depth-input { /* include log */
   width: 80px;
   padding: 12px;
   font-size: 17px;
@@ -273,7 +274,8 @@ input[type="number"]:focus,
 .easy-input:focus,
 .num:focus,
 .sqrt-depth-input:focus,
-.fact-depth-input:focus {
+.fact-depth-input:focus,
+.log-depth-input:focus {
   background: var(--bg-primary);
   box-shadow: 0 0 0 2px var(--accent-blue), 0 4px 12px var(--shadow-color);
   outline: none;
@@ -449,22 +451,20 @@ button:active {
 .operator-buttons button.toggle-btn.active::before { opacity: .55; }
 
 .sqrt-depth-container,
-.fact-depth-container {
+.fact-depth-container,
+.log-depth-container { /* include log */
   margin-top: 16px;
   padding-top: 16px;
   border-top: 1px solid var(--bg-tertiary);
-  display: none
+  display: none;
 }
-
-.sqrt-depth-container.active {
-  display: block;
-}
-
+.sqrt-depth-container.active,
+.log-depth-container.active { display:block; }
 .sqrt-depth-container label,
-.fact-depth-container label {
-  color: var(--text-secondary);
-  font-size: 15px;
-}
+.fact-depth-container label,
+.log-depth-container label { color: var(--text-secondary); font-size:15px; }
+.log-depth-input { width:80px; padding:12px; font-size:17px; height:60px; border:none; border-radius:10px; background: var(--bg-secondary); box-shadow: inset 0 1px 3px var(--shadow-color); text-align:center; }
+.log-depth-input:focus { background: var(--bg-primary); box-shadow: 0 0 0 2px var(--accent-blue), 0 4px 12px var(--shadow-color); outline:none; }
 
 .page {
   display: none;
