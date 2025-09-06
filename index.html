@@ -60,6 +60,8 @@
                 <button id="toggleModBtn" class="toggle-btn" onclick="toggleOperator('%')">เปิดการใช้ mod</button>
                 <button id="togglePowBtn" class="toggle-btn" onclick="toggleOperator('^')">เปิดการใช้ ^</button>
                 <button id="toggleConcatBtn" class="toggle-btn" onclick="toggleOperator('||')">เปิดการใช้ concat</button>
+                <button id="toggleSumBtn" class="toggle-btn" onclick="toggleOperator('∑')">เปิดการใช้ ∑</button>
+                <br>
                 <button id="toggleSqrtBtn" class="toggle-btn" onclick="toggleOperator('√')">เปิดการใช้ √</button>
                 <div id="sqrt-depth-container" class="sqrt-depth-container">
                   <label for="sqrt-depth">ระดับการซ้อน √ สูงสุด: </label>
@@ -84,7 +86,6 @@
                     onchange="updateMaxFactDepth()"
                   />
                 </div>
-                <button id="toggleSumBtn" class="toggle-btn" onclick="toggleOperator('∑')">เปิดการใช้ ∑</button>
               </div>
               <button id="toggleFastModeBtn" onclick="toggleFastMode()" class="toggle-btn mode-btn">เปิดโหมดหาคำตอบเร็ว</button>
               <div id="fast-accuracy-container" class="fast-accuracy-container" style="display:none; margin-top:8px;">
@@ -96,14 +97,6 @@
               <button id="toggleCleanModeBtn" onclick="toggleCleanMode()" class="toggle-btn mode-btn">เปิดโหมดคลีน</button>
             </div>
             
-            <div class="option-group">
-              <h3>สถานะระบบ</h3>
-              <div id="wasm-status" class="status-indicator">
-                <span id="wasm-status-text">กำลังโหลด WebAssembly...</span>
-                <div id="wasm-status-icon" class="status-icon loading"></div>
-              </div>
-              <p class="status-description">WebAssembly เพิ่มความเร็วในการคำนวณทางคณิตศาสตร์</p>
-            </div>
           </div>
         </div>
       </div>
@@ -1093,39 +1086,6 @@ addNumber();
 const firstNum = document.querySelector('.num');
 if (firstNum) firstNum.step = 'any';
 
-
-// Initialize WebAssembly status monitoring
-async function initializeWASM() {
-  const statusText = document.getElementById('wasm-status-text');
-  const statusIcon = document.getElementById('wasm-status-icon');
-  const statusDesc = document.querySelector('.status-description');
-  
-  try {
-    await window.wasmMath.initPromise;
-    
-    if (window.wasmMath.isReady) {
-      statusText.textContent = 'WebAssembly พร้อมใช้งาน (add, sub, mul, div, sqrt)';
-      statusIcon.className = 'status-icon ready';
-      statusIcon.textContent = '✓';
-      statusDesc.textContent = 'WebAssembly ช่วยเพิ่มความเร็วการคำนวณทางคณิตศาสตร์ทั้ง 5 operations';
-    } else {
-      throw new Error(window.wasmMath.errorMessage || 'WebAssembly ไม่สามารถเริ่มต้นได้');
-    }
-  } catch (error) {
-    statusText.textContent = 'ใช้ JavaScript fallback';
-    statusIcon.className = 'status-icon fallback';
-    statusIcon.textContent = '⚠';
-    
-    if (window.wasmMath.errorMessage) {
-      statusDesc.innerHTML = `
-        <strong>สาเหตุ:</strong> ${window.wasmMath.errorMessage}<br>
-        <em>ระบบจะใช้ JavaScript ในการคำนวณแทน</em>
-      `;
-    } else {
-      statusDesc.textContent = 'ระบบจะใช้ JavaScript ในการคำนวณแทน';
-    }
-  }
-}
 
 // Initialize WASM status
 initializeWASM();
