@@ -187,7 +187,7 @@ document.getElementById("toggleMulBtn").classList.add('active');
 document.getElementById("toggleDivBtn").classList.add('active');
 
 function updateNavBlob(){
-  if(window.navDragging) return; // skip during drag
+  if(window.navDragging) return; // อย่าบังคับตำแหน่งระหว่างลาก
   const switchEl = document.querySelector('.nav-glass-switch');
   const blob = switchEl?.querySelector('.nav-blob');
   const active = switchEl?.querySelector('.nav-btn.active');
@@ -195,19 +195,15 @@ function updateNavBlob(){
   const rect = active.getBoundingClientRect();
   const parentRect = switchEl.getBoundingClientRect();
   const left = rect.left - parentRect.left;
-  const prevWidth = blob.getBoundingClientRect().width || 0;
-  const targetWidth = rect.width;
-  // initial (width 0) -> place without animation
-  if(prevWidth === 0){
-    blob.classList.add('no-anim');
-    blob.style.width = targetWidth + 'px';
-    blob.style.transform = `translateX(${left}px)`;
-    requestAnimationFrame(()=> blob.classList.remove('no-anim'));
-  } else {
-    blob.style.width = targetWidth + 'px';
-    // trigger transition by changing transform directly (avoid CSS var issue on iOS)
-    blob.style.transform = `translateX(${left}px)`;
-  }
+  if(typeof window.prevBlobLeft === 'undefined') window.prevBlobLeft = left;
+  const delta = left - window.prevBlobLeft;
+  const adelta = Math.abs(delta);
+  blob.classList.remove('squish-light','squish-medium','squish-strong');
+  if(adelta > 60) blob.classList.add('squish-strong');
+  else if(adelta > 25) blob.classList.add('squish-medium');
+  else blob.classList.add('squish-light');
+  blob.style.width = rect.width + 'px';
+  blob.style.setProperty('--blob-x', left + 'px');
   window.prevBlobLeft = left;
 }
 
@@ -1157,38 +1153,52 @@ function initNavDrag(){
   const buttons = Array.from(switchEl.querySelectorAll('.nav-btn'));
   let activeIndex = buttons.findIndex(b=>b.classList.contains('active'));
   if(activeIndex < 0) activeIndex = 0;
+  // Helper to snap blob to active button
   function snapToActive(animate=true){
-    const btn = buttons[activeIndex]; if(!btn) return;
+    const btn = buttons[activeIndex];
+    if(!btn) return;
     const rect = btn.getBoundingClientRect();
     const parentRect = switchEl.getBoundingClientRect();
     const left = rect.left - parentRect.left;
     blob.style.width = rect.width + 'px';
-    if(!animate){ switchEl.classList.add('dragging'); blob.style.transform = `translateX(${left}px)`; switchEl.offsetHeight; switchEl.classList.remove('dragging'); }
-    else { blob.style.transform = `translateX(${left}px)`; }
+    if(!animate){
+      switchEl.classList.add('dragging');
+      blob.style.setProperty('--blob-x', left + 'px');
+      switchEl.offsetHeight; // force layout
+      switchEl.classList.remove('dragging');
+    } else {
+      blob.style.setProperty('--blob-x', left + 'px');
+    }
   }
   snapToActive(false);
+  // Click / tap activation
   buttons.forEach((btn,i)=>{
     btn.dataset.index = i;
     btn.addEventListener('click', ()=>{ activeIndex=i; showPage(btn.dataset.target, btn); snapToActive(true); });
     btn.addEventListener('touchstart', (e)=>{ e.preventDefault(); activeIndex=i; showPage(btn.dataset.target, btn); snapToActive(true); }, {passive:false});
   });
+  // Drag state
   let dragging = false; let startX = 0; let originX = 0; let maxX = 0;
   function pointerDown(e){
     if(e.type==='mousedown' && e.button!==0) return;
     if(!switchEl.contains(e.target)) return;
     dragging = true; window.navDragging = true; switchEl.classList.add('dragging');
     const parentRect = switchEl.getBoundingClientRect();
-    const activeBtn = buttons[activeIndex]; const btnRect = activeBtn.getBoundingClientRect();
-    originX = btnRect.left - parentRect.left; startX = e.touches ? e.touches[0].clientX : e.clientX;
+    const activeBtn = buttons[activeIndex];
+    const btnRect = activeBtn.getBoundingClientRect();
+    originX = btnRect.left - parentRect.left;
+    startX = e.touches ? e.touches[0].clientX : e.clientX;
     blob.style.width = btnRect.width + 'px';
-    maxX = parentRect.width - btnRect.width - 8;
+    maxX = parentRect.width - btnRect.width - 8; // padding safeguard
     e.preventDefault();
   }
   function pointerMove(e){
     if(!dragging) return;
     const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    let x = originX + (clientX - startX); if(x<0) x=0; if(x>maxX) x=maxX;
-    blob.style.transform = `translateX(${x}px)`;
+    let x = originX + (clientX - startX);
+    if(x < 0) x = 0; if(x > maxX) x = maxX;
+    blob.style.setProperty('--blob-x', x + 'px');
+    // Determine nearest button
     const parentRect = switchEl.getBoundingClientRect();
     const center = x + blob.offsetWidth/2;
     let nearest = activeIndex; let best = Infinity;
@@ -1198,14 +1208,18 @@ function initNavDrag(){
       const d = Math.abs(c - center);
       if(d < best){ best = d; nearest = i; }
     });
-    activeIndex = nearest; e.preventDefault();
+    activeIndex = nearest;
+    e.preventDefault();
   }
   function pointerUp(e){
     if(!dragging) return;
     dragging = false; window.navDragging = false; switchEl.classList.remove('dragging');
-    const btn = buttons[activeIndex]; if(btn) showPage(btn.dataset.target, btn);
-    snapToActive(true); e.preventDefault();
+    const btn = buttons[activeIndex];
+    if(btn){ showPage(btn.dataset.target, btn); }
+    snapToActive(true);
+    e.preventDefault();
   }
+  // Event listeners
   ['pointerdown','mousedown','touchstart'].forEach(ev=> switchEl.addEventListener(ev, pointerDown, {passive:false}));
   ['pointermove','mousemove','touchmove'].forEach(ev=> window.addEventListener(ev, pointerMove, {passive:false}));
   ['pointerup','mouseup','touchend','touchcancel','mouseleave'].forEach(ev=> window.addEventListener(ev, pointerUp, {passive:false}));
