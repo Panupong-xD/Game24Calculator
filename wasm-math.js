@@ -160,7 +160,6 @@ class WASMMathModule {
   }
 }
 
-// Global WASM module instance
 if (typeof window !== 'undefined') {
   window.wasmMath = new WASMMathModule();
 } else if (typeof self !== 'undefined') {

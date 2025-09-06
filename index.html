@@ -84,6 +84,7 @@
                     onchange="updateMaxFactDepth()"
                   />
                 </div>
+                <button id="toggleSumBtn" class="toggle-btn" onclick="toggleOperator('∑')">เปิดการใช้ ∑</button>
               </div>
               <button id="toggleFastModeBtn" onclick="toggleFastMode()" class="toggle-btn mode-btn">เปิดโหมดหาคำตอบเร็ว</button>
               <div id="fast-accuracy-container" class="fast-accuracy-container" style="display:none; margin-top:8px;">
@@ -127,7 +128,7 @@ function showPage(pageId, sourceBtn=null) {
 }
 
 // Core variables
-let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false };
+let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false, '∑': false }; // added '∑'
 let useFastMode = false;
 let useIntegerMode = false;
 let useCleanMode = false; // NEW: efficiency / clean mode
@@ -161,12 +162,13 @@ function displayOperatorLabel(op){
   if(op=== '/') return '÷';
   if(op=== '%') return 'mod';
   if(op==='||') return 'concat';
+  if(op==='∑') return '∑';
   return op;
 }
 
 function toggleOperator(op) {
   operatorFlags[op] = !operatorFlags[op];
-  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : op === '!' ? 'Fact' : op === '||' ? 'Concat' : 'UNKNOWN'}Btn`);
+  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : op === '!' ? 'Fact' : op === '||' ? 'Concat' : op === '∑' ? 'Sum' : 'UNKNOWN'}Btn`);
   const disp = displayOperatorLabel(op);
   if (operatorFlags[op]) {
     btn.textContent = `ปิดการใช้ ${disp}`;
@@ -403,10 +405,7 @@ function evaluateAST(node) {
   let rightVal = evaluateAST(node.right);
   const cacheKey = `${node.operator}|${leftVal}|${rightVal}`;
   if (calculationCache.has(cacheKey)) return calculationCache.get(cacheKey);
-  
   let result;
-  
-  // Use WebAssembly for basic operations when available
   if (window.wasmMath && window.wasmMath.isReady) {
     switch (node.operator) {
       case "+": 
@@ -436,16 +435,21 @@ function evaluateAST(node) {
         result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? window.wasmMath.factorial(rightVal) : NaN; 
         break;
       case "||": {
-        // concat: only allow non-negative integers to avoid ambiguous decimal merges
         if(!operatorFlags['||']) { result = NaN; break; }
         if(!Number.isInteger(leftVal) || !Number.isInteger(rightVal) || leftVal < 0 || rightVal < 0) { result = NaN; break; }
         const concatVal = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal)));
         result = concatVal;
         break; }
+      case "∑": {
+        if(!operatorFlags['∑']) { result = NaN; break; }
+        if(!Number.isInteger(leftVal) || !Number.isInteger(rightVal)) { result = NaN; break; }
+        if(leftVal > rightVal){ result = NaN; break; }
+        const n = rightVal - leftVal + 1;
+        result = (leftVal + rightVal) * n / 2;
+        break; }
       default: return NaN;
     }
   } else {
-    // JavaScript fallback
     switch (node.operator) {
       case "+": result = operatorFlags['+'] ? leftVal + rightVal : NaN; break;
       case "-": result = operatorFlags['-'] ? leftVal - rightVal : NaN; break;
@@ -453,23 +457,23 @@ function evaluateAST(node) {
       case "/": result = operatorFlags['/'] && rightVal !== 0 ? leftVal / rightVal : NaN; break;
       case "%":
         if (!operatorFlags['%'] || rightVal === 0) return NaN;
-        result = leftVal - rightVal * Math.floor(leftVal / rightVal);
-        break;
+        result = leftVal - rightVal * Math.floor(leftVal / rightVal); break;
       case "^":
         if (!operatorFlags['^']) return NaN;
-        result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : Math.pow(leftVal, rightVal);
-        break;
+        result = (leftVal === 0 && rightVal <= 0) ? (rightVal === 0 ? 1 : NaN) : Math.pow(leftVal, rightVal); break;
       case "√": result = operatorFlags['√'] && rightVal >= 0 ? Math.sqrt(rightVal) : NaN; break;
       case "!": result = operatorFlags['!'] && rightVal <= MAX_FACTORIAL_INPUT && rightVal >= 0 && Number.isInteger(rightVal) ? factorial(rightVal) : NaN; break;
       case "||": {
         if(!operatorFlags['||']) { result = NaN; break; }
         if(!Number.isInteger(leftVal) || !Number.isInteger(rightVal) || leftVal < 0 || rightVal < 0) { result = NaN; break; }
-        result = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal)));
-        break; }
+        result = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal))); break; }
+      case "∑": {
+        if(!operatorFlags['∑']) { result = NaN; break; }
+        if(!Number.isInteger(leftVal) || !Number.isInteger(rightVal) || leftVal > rightVal){ result = NaN; break; }
+        const n = rightVal - leftVal + 1; result = (leftVal + rightVal) * n / 2; break; }
       default: return NaN;
     }
   }
-  
   if (!isNaN(result)) {
     if (calculationCache.size > 1000000) calculationCache.clear();
     calculationCache.set(cacheKey, result);
@@ -1027,17 +1031,18 @@ function displayResults(results) {
     if(useCleanMode){
       // เลือกคำตอบที่ "คลีน" ที่สุดตามเกณฑ์: ใช้ operator ง่ายที่สุด, จำนวน operator น้อย, วงเล็บน้อย, ความยาวสั้น
       function computeCleanScore(expr){
-        // expr ยังเป็นรูป canonical (มี *,/,%,^,√,!,||)
+        // expr ยังเป็นรูป canonical (มี *,/,%,^,√,!,||,∑)
         const original = expr;
+        // ปกป้อง concat (||) ด้วยสัญลักษณ์เดี่ยว § เพื่อให้ง่ายต่อ regex นับ operator
         const protectedExpr = original.replace(/\|\|/g,'§');
-        const ops = protectedExpr.match(/[+\-*\/^%√!§]/g) || [];
+        // รวม ∑ เข้าไปใน regex เพื่อนับคะแนน
+        const ops = protectedExpr.match(/[+\-*\/^%√!§∑]/g) || [];
         const opCount = ops.length;
         const parenCount = (original.match(/\(/g)||[]).length;
-        // กำหนด weight ความซับซ้อน
-        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':3, '^':4, '√':5, '!':5 };
+        // ปรับ weightMap: ∑ มีความซับซ้อนสูงกว่า ^ และใกล้เคียงกับ unary ลึกๆ
+        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':4, '^':3, '√':4, '!':5, '∑':5 };
         let maxWeight = 0; let sumWeight=0; const usedSet=new Set();
         ops.forEach(o=>{ const w=weightMap[o]||9; if(w>maxWeight) maxWeight=w; sumWeight+=w; usedSet.add(o); });
-        // ใช้ tuple: (maxWeight, sumWeight, opCount, parenCount, length)
         return { maxWeight, sumWeight, opCount, parenCount, length: original.length };
       }
       function betterScore(a,b){
