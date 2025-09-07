@@ -111,14 +111,10 @@ function dfsFindClosest(nums,target,closest){
   const ENABLE = { '+': !!operatorFlags['+'], '-': !!operatorFlags['-'], '*': !!operatorFlags['*'], '/': !!operatorFlags['/'], '%': !!operatorFlags['%'], '^': !!operatorFlags['^'], '√': !!operatorFlags['√'], '!': !!operatorFlags['!'], '||': !!operatorFlags['||'], '∑': !!operatorFlags['∑'], 'log': !!operatorFlags['log'] };
 
   const start = (self.performance && performance.now)? performance.now(): Date.now();
-  const hardDeadline = start + (externalTimeBudgetMs != null ? externalTimeBudgetMs : (400 + Math.pow(speedAccuracy,2.2)*9600)); // fallback if not provided
-  // Ensure higher slider values guarantee at least proportional time usage.
-
-  // scale breadth with available time: more time -> wider beam, deeper unaries
+  const hardDeadline = start + (externalTimeBudgetMs != null ? externalTimeBudgetMs : (400 + Math.pow(speedAccuracy,2.2)*9600));
   const timeSec = (externalTimeBudgetMs||0)/1000;
-  const breadthBoost = 1 + Math.min(2.5, timeSec/6); // up to 1+ ~2.5
-  const magnitudeRelax = Math.min(3.5, 0.8 + timeSec/6); // increases allowed magnitude
-  const enableFallbackThresholdSec = 6; // if time >= this we'll plan fallback automatically later if not exact
+  const breadthBoost = 1 + Math.min(2.5, timeSec/6);
+  const magnitudeRelax = Math.min(3.5, 0.8 + timeSec/6);
 
   const targetMag = Math.abs(target)||1;
   const baseMagLimit = targetMag*16 + 500;
@@ -127,13 +123,13 @@ function dfsFindClosest(nums,target,closest){
   const initialBeam = Math.round( (12 + 4*nums.length) * breadthBoost );
   const maxBeam = Math.round( (speedAccuracy < 0.5 ? 220 : 120 + speedAccuracy*680) * breadthBoost );
   let currentBeam = Math.min(initialBeam, maxBeam);
-  const widenIntervalNodes = 2200; // more frequent with more time
+  const widenIntervalNodes = 2200;
   let nodeExpandCount=0;
 
   const allowPower = ENABLE['^'] && (speedAccuracy > 0.25 || timeSec > 3);
   const maxSqrtUnary = (speedAccuracy > 0.7 || timeSec > 4) ? MAX_SQRT_DEPTH : 1;
   const maxFactUnary = (speedAccuracy > 0.8 || timeSec > 5) ? MAX_FACT_DEPTH : 1;
-  const maxLogUnary  = (speedAccuracy > 0.7 || timeSec > 4) ? MAX_LOG_DEPTH : 1; // NEW: allow deeper log only when more time/accuracy
+  const maxLogUnary  = (speedAccuracy > 0.7 || timeSec > 4) ? MAX_LOG_DEPTH : 1;
 
   function widen(){ if(currentBeam < maxBeam){ currentBeam = Math.min(maxBeam, Math.round(currentBeam * (1.45 + 0.25*speedAccuracy))); } }
   function timeExceeded(){ const now=(self.performance && performance.now)? performance.now(): Date.now(); return now > hardDeadline; }
@@ -153,7 +149,7 @@ function dfsFindClosest(nums,target,closest){
       if(ENABLE['%']){ pushCandidate('%',a,b,ea,eb); pushCandidate('%',b,a,eb,ea); }
       if(allowPower && ENABLE['^']){ pushCandidate('^',a,b,ea,eb); pushCandidate('^',b,a,eb,ea); }
       if(ENABLE['||']){ pushCandidate('||',a,b,ea,eb); pushCandidate('||',b,a,eb,ea); }
-      if(ENABLE['∑']){ pushCandidate('∑',a,b,ea,eb); /* order matters: a must <= b, pushCandidate will filter */ pushCandidate('∑',b,a,eb,ea); }
+      if(ENABLE['∑']){ pushCandidate('∑',a,b,ea,eb); pushCandidate('∑',b,a,eb,ea); }
       if(candidates.length===0) continue;
       candidates.sort((x,y)=>x.diff-y.diff);
       const BEAM = (n>=5)? Math.min(candidates.length, currentBeam) : candidates.length;
@@ -178,7 +174,7 @@ function dfsFindClosest(nums,target,closest){
   return found;
 }
 
-// Exhaustive fallback (only if time remains) searches systematically using full operators.
+// Exhaustive fallback (only if time remains)
 function fallbackExactSearch(nums,target){ const ENABLE={ '+':!!operatorFlags['+'], '-':!!operatorFlags['-'], '*':!!operatorFlags['*'], '/':!!operatorFlags['/'], '%':!!operatorFlags['%'], '^':!!operatorFlags['^'], '√':!!operatorFlags['√'], '!':!!operatorFlags['!'], '||': !!operatorFlags['||'], '∑': !!operatorFlags['∑'], 'log': !!operatorFlags['log'] }; const original=nums.slice(); let best=null; let exact=null; let nodeCount=0; const NODE_LIMIT=900000; const visited=new Set(); function k(a){ return a.slice().sort((x,y)=>x-y).join(','); } function record(ast){ const val=evaluateAST(ast); if(!isFinite(val)||isNaN(val)) return; const diff=Math.abs(val-target); if(!best || diff<best.diff){ best={expression:serializeAST(ast), result:val, diff, isExact: diff<=EXACT_EPS}; postProgress(best); } if(diff<=EXACT_EPS && usesAllNumbers(ast,original)){ exact={expression:serializeAST(ast), result:val, diff:0, isExact:true}; return true;} return false; }
   const start=(self.performance && performance.now)? performance.now(): Date.now();
   function timeExceeded(){ const now=(self.performance && performance.now)? performance.now(): Date.now(); return externalTimeBudgetMs!=null && now > start + externalTimeBudgetMs; }
@@ -196,18 +192,280 @@ function fallbackExactSearch(nums,target){ const ENABLE={ '+':!!operatorFlags['+
   dfs(nums.slice(), nums.map(n=>({type:'num',value:n})));
   return exact || best; }
 
+// ---------------- FAST MODE ANYTIME MULTI-PHASE IMPLEMENTATION -----------------
+function fast_runAnytime(numsInput, target){
+  const nowFn = (self.performance && performance.now) ? ()=>performance.now() : ()=>Date.now();
+  const start = nowFn();
+  const budget = externalTimeBudgetMs != null ? externalTimeBudgetMs : (400 + Math.pow(speedAccuracy,2.2)*9600);
+  const deadline = start + budget;
+  const n = numsInput.length;
+  let nums = numsInput.slice();
+  const LARGE_N_THRESHOLD = 7; // configurable pivot
+  const largeN = n >= LARGE_N_THRESHOLD;
+  let best = null; // {expression,result,diff,isExact, source}
+  let bestHistory = [];
+  let lastImprovementTime = start;
+  function updateBest(expr,result){ const diff=Math.abs(result-target); if(!best || diff < best.diff){ best={expression:expr,result,diff,isExact:diff<=EXACT_EPS, source:currentPhase}; postProgress(best); bestHistory.push({t:nowFn(), diff}); lastImprovementTime = nowFn(); if(best.isExact){ return true; } } return false; }
+  function timeLeft(){ return deadline - nowFn(); }
+  function timeExceeded(){ return nowFn() >= deadline; }
+  let currentPhase = 'init';
+
+  // Phase time allocation (adaptive). Override for largeN to emphasize frontier + stochastic.
+  let phaseBudget = { seed: budget*0.12, smallEx: (n<=4? budget*0.15:0), frontier: budget*0.33, stochastic: budget*0.20, genetic: budget*0.10, intensify: budget*0.10, padding: 6 };
+  if(largeN){
+    phaseBudget = { seed: Math.min(budget*0.05, 220), smallEx: 0, frontier: budget*0.50, stochastic: budget*0.25, genetic: budget*0.08, intensify: budget*0.08, padding: 6 };
+  }
+
+  // ---------------- Phase 0 + 1: Initialization + Seed Deterministic Probe ----------------
+  currentPhase='seed';
+  // basic stats
+  const sum = nums.reduce((a,b)=>a+b,0);
+  const prod = nums.reduce((a,b)=>a*b,1);
+  const maxV = Math.max(...nums); const minV = Math.min(...nums);
+  const avg = sum/nums.length;
+  const median = nums.slice().sort((a,b)=>a-b)[Math.floor(nums.length/2)];
+  const seedExprs = [
+    {expression: '('+nums.join('+')+')', value: sum},
+    {expression: '('+nums.join('*')+')', value: prod},
+    {expression: String(maxV), value:maxV},
+    {expression: String(minV), value:minV},
+    {expression: '('+maxV+'-'+minV+')', value: maxV-minV},
+    {expression: '('+maxV+'+'+minV+')', value: maxV+minV},
+    {expression: '('+avg+')', value: avg},
+    {expression: '('+median+')', value: median}
+  ];
+  for(const s of seedExprs){ if(!isFinite(s.value)||isNaN(s.value)) continue; if(useIntegerMode && !isIntegerResult(s.value)) continue; if(updateBest(s.expression,s.value)) return best; }
+
+  // seed DFS (small beam) limited time
+  function fast_seedDFS(){
+    const localDeadline = start + phaseBudget.seed;
+    const ENABLE = { '+': !!operatorFlags['+'], '-': !!operatorFlags['-'], '*': !!operatorFlags['*'], '/': !!operatorFlags['/'], '%': !!operatorFlags['%'], '^': !!operatorFlags['^'], '√': !!operatorFlags['√'], '!': !!operatorFlags['!'], '||': !!operatorFlags['||'], '∑': !!operatorFlags['∑'], 'log': !!operatorFlags['log'] };
+    const visited=new Set();
+    const QF=1e9; function q(v){ if(!isFinite(v)) return 'X'; return Math.round(v*QF)/QF; }
+    function key(arr){ return arr.map(q).sort((a,b)=>a-b).join(','); }
+    const allowPower = ENABLE['^'];
+    const beamBase = largeN ? Math.max(8, Math.floor(n*1.3)) : Math.max(6, 10 - Math.floor(n/2));
+    let expansions=0;
+    function tExceeded(){ return nowFn() >= localDeadline || nowFn()>=deadline; }
+    function record(val, ast, full){ if(!full) return false; const expr=serializeAST(ast); return updateBest(expr,val); }
+    function dfs(curNums, curExpr){ if(tExceeded()) return true; const k=key(curNums); if(visited.has(k)) return false; visited.add(k); if(curNums.length===1){ const r=curNums[0]; const e=curExpr[0]; if(usesAllNumbers(e, numsInput)) record(r,e,true); return false; }
+      const nL=curNums.length; const pairs=[]; for(let i=0;i<nL-1;i++){ for(let j=i+1;j<nL;j++){ const a=curNums[i], b=curNums[j]; let score=Math.abs((a+b)-target); score=Math.min(score, Math.abs((a*b)-target)); score=Math.min(score, Math.abs((a-b)-target)); score=Math.min(score, Math.abs((b-a)-target)); if(Math.abs(b)>1e-12) score=Math.min(score, Math.abs((a/b)-target)); if(Math.abs(a)>1e-12) score=Math.min(score, Math.abs((b/a)-target)); if(allowPower){ if(!(a===0 && b<=0)) score=Math.min(score, Math.abs(Math.pow(a,b)-target)); if(!(b===0 && a<=0)) score=Math.min(score, Math.abs(Math.pow(b,a)-target)); } pairs.push({i,j,score}); } }
+      pairs.sort((x,y)=>x.score-y.score);
+      const beam = Math.min(pairs.length, beamBase);
+      for(let pi=0; pi<beam; pi++){
+        if(tExceeded()) return true;
+        const {i,j}=pairs[pi];
+        const a=curNums[i], b=curNums[j]; const ea=curExpr[i], eb=curExpr[j];
+        const restNums=[]; const restExpr=[]; for(let t=0;t<nL;t++){ if(t!==i && t!==j){ restNums.push(curNums[t]); restExpr.push(curExpr[t]); }}
+        const candOps=['+','-','*','/']; if(ENABLE['%']) candOps.push('%'); if(allowPower) candOps.push('^'); if(ENABLE['||']) candOps.push('||'); if(ENABLE['∑']) candOps.push('∑');
+        const candidates=[];
+        function add(op,x,y,ex,ey){ let val; switch(op){ case '+': val=x+y; break; case '-': val=x-y; break; case '*': val=x*y; break; case '/': val= Math.abs(y)<1e-12? NaN: x/y; break; case '%': val= Math.abs(y)<1e-12? NaN: x - y*Math.floor(x/y); break; case '^': val = (x===0 && y<=0)? NaN: Math.pow(x,y); break; case '||': val = (Number.isInteger(x)&&Number.isInteger(y)&& x>=0 && y>=0)? parseFloat(String(Math.trunc(x))+String(Math.trunc(y))) : NaN; break; case '∑': val = (Number.isInteger(x)&&Number.isInteger(y)&& x<=y)? ((x+y)*(y-x+1)/2) : NaN; break; }
+          if(!isFinite(val)||isNaN(val)) return; if(useIntegerMode && !isIntegerResult(val)) return; const diff=Math.abs(val-target); candidates.push({op,val,diff,left:ex,right:ey}); }
+        add('+',a,b,ea,eb); add('-',a,b,ea,eb); add('-',b,a,eb,ea); add('*',a,b,ea,eb); add('/',a,b,ea,eb); add('/',b,a,eb,ea);
+        if(ENABLE['%']){ add('%',a,b,ea,eb); add('%',b,a,eb,ea);} if(allowPower){ add('^',a,b,ea,eb); add('^',b,a,eb,ea);} if(ENABLE['||']){ add('||',a,b,ea,eb); add('||',b,a,eb,ea);} if(ENABLE['∑']){ add('∑',a,b,ea,eb); add('∑',b,a,eb,ea);} candidates.sort((x,y)=>x.diff-y.diff);
+        const cut = Math.min(candidates.length, largeN ? 22 : 14);
+        for(let ci=0; ci<cut; ci++){
+          if(tExceeded()) return true;
+          const c=candidates[ci]; const ast={type:'op',operator:c.op,left:c.left,right:c.right,value:c.val};
+          if(nL===2){ if(record(c.val,ast,true)) return true; }
+          const nextNums=restNums.concat([c.val]); const nextExpr=restExpr.concat([ast]);
+          if(dfs(nextNums,nextExpr)) return true; expansions++; if(best && best.isExact) return true; if(expansions>(largeN?9000:5000) && tExceeded()) return true;
+        }
+      }
+      return false;
+    }
+    dfs(nums, nums.map(v=>({type:'num',value:v})));
+  }
+  fast_seedDFS();
+  if(best && best.isExact) return best;
+
+  // ---------------- Phase 2: Exhaustive small-n batched (only n<=4) ----------------
+  currentPhase='smallEx';
+  let smallExState=null;
+  function initSmallEx(){ if(n>4) return; // prepare permutations & batching
+    const arr=nums.slice();
+    const seen=new Set(); const perms=[];
+    function permute(a,l){ if(l===a.length){ const key=a.join(','); if(!seen.has(key)){ seen.add(key); perms.push(a.slice()); } return; } for(let i=l;i<a.length;i++){ [a[l],a[i]]=[a[i],a[l]]; permute(a,l+1); [a[l],a[i]]=[a[i],a[l]]; } }
+    permute(arr,0);
+    smallExState={ perms, idx:0 };
+  }
+  if(!largeN) initSmallEx();
+  function runSmallExBatch(msSlice){ if(!smallExState) return; const sliceDeadline = nowFn()+msSlice; while(nowFn()<sliceDeadline && smallExState.idx < smallExState.perms.length){ const p = smallExState.perms[smallExState.idx++]; const exprs = generateAllGroupings(p,target); for(const ex of exprs){ const val=evaluateAST(ex); if(!isFinite(val)||isNaN(val)) continue; if(!usesAllNumbers(ex,p)) continue; if(updateBest(serializeAST(ex),val)) return true; if(timeExceeded()) return true; } if(best && best.isExact) return true; if(timeExceeded()) return true; }
+    return false; }
+  if(!largeN && n<=4 && timeLeft()>0 && !best?.isExact){ while(timeLeft()>0 && (nowFn()-start) < phaseBudget.seed + phaseBudget.smallEx && !best?.isExact){ if(runSmallExBatch(3)) break; if(timeLeft()<5) break; }
+  }
+  if(best && best.isExact) return best;
+
+  // ---------------- Phase 3 (LargeN override): High-throughput layered beam search ----------------
+  function largeNBeamSearch(){
+    currentPhase='beam';
+    const ENABLE = { '+':!!operatorFlags['+'], '-':!!operatorFlags['-'], '*':!!operatorFlags['*'], '/':!!operatorFlags['/'], '%':!!operatorFlags['%'], '^':!!operatorFlags['^'], '||':!!operatorFlags['||'], '∑':!!operatorFlags['∑'] };
+    const allowPower = ENABLE['^'];
+    const startPhase = nowFn();
+    const phaseEnd = start + phaseBudget.seed + phaseBudget.frontier; // allocate frontier budget window
+    const BASE_BEAM = Math.min(1800, 320 + n*140 + Math.round(speedAccuracy*600));
+    const magnitudeSoft = Math.abs(target)*32 + 2000;
+    const pairOpOrder = ['+','*','-','/','%','^','||','∑'];
+    const opEnabled = pairOpOrder.filter(o=>ENABLE[o]);
+    const transBest = new Map(); // signature -> best diff
+    function sig(arr){ return arr.slice().sort((a,b)=>a-b).map(v=>Math.round(v*1e6)/1e6).join(','); }
+    function pushNext(container,item,limit){ container.push(item); }
+    function expandLayer(states){
+      const next=[];
+      for(const st of states){ if(timeExceeded()|| nowFn()>phaseEnd) break; const arr=st.arr; const exprs=st.exprs; const L=arr.length; if(L===1){ continue; }
+        // heuristic pair ranking: pick top diff-improving pairs only
+        const pairScores=[]; for(let i=0;i<L-1;i++){ for(let j=i+1;j<L;j++){ const a=arr[i], b=arr[j]; let score=Math.min(Math.abs((a+b)-target), Math.abs((a*b)-target)); score=Math.min(score, Math.abs((a-b)-target)); score=Math.min(score, Math.abs((b-a)-target)); if(Math.abs(b)>1e-12) score=Math.min(score, Math.abs((a/b)-target)); if(Math.abs(a)>1e-12) score=Math.min(score, Math.abs((b/a)-target)); if(allowPower){ if(!(a===0 && b<=0)) score=Math.min(score, Math.abs(Math.pow(a,b)-target)); if(!(b===0 && a<=0)) score=Math.min(score, Math.abs(Math.pow(b,a)-target)); } pairScores.push({i,j,score}); } }
+        pairScores.sort((a,b)=>a.score-b.score);
+        const pairLimit = L>=10? 22 : L>=8? 26 : 30;
+        for(let p=0; p<Math.min(pairLimit,pairScores.length); p++){
+          if(timeExceeded()|| nowFn()>phaseEnd) break;
+          const {i,j}=pairScores[p]; const a=arr[i], b=arr[j]; const ea=exprs[i], eb=exprs[j]; const restVals=[]; const restExpr=[]; for(let t=0;t<L;t++){ if(t!==i && t!==j){ restVals.push(arr[t]); restExpr.push(exprs[t]); }}
+          const candOps=[]; for(const op of opEnabled){ // add canonical order variants
+            if(op==='+'){ candOps.push({op,x: a<=b?a:b, y:a<=b?b:a, ex:a<=b?ea:eb, ey:a<=b?eb:ea}); }
+            else if(op==='*'){ candOps.push({op,x: a<=b?a:b, y:a<=b?b:a, ex:a<=b?ea:eb, ey:a<=b?eb:ea}); }
+            else if(op==='-'){ candOps.push({op,x:a,y:b,ex:ea,ey:eb}); candOps.push({op,x:b,y:a,ex:eb,ey:ea}); }
+            else if(op==='/'){ candOps.push({op,x:a,y:b,ex:ea,ey:eb}); candOps.push({op,x:b,y:a,ex:eb,ey:ea}); }
+            else if(op==='%'){ candOps.push({op,x:a,y:b,ex:ea,ey:eb}); candOps.push({op,x:b,y:a,ex:eb,ey:ea}); }
+            else if(op==='^'){ candOps.push({op,x:a,y:b,ex:ea,ey:eb}); candOps.push({op,x:b,y:a,ex:eb,ey:ea}); }
+            else if(op==='||'){ candOps.push({op,x:a,y:b,ex:ea,ey:eb}); candOps.push({op,x:b,y:a,ex:eb,ey:ea}); }
+            else if(op==='∑'){ candOps.push({op,x:a,y:b,ex:ea,ey:eb}); candOps.push({op,x:b,y:a,ex:eb,ey:ea}); }
+          }
+          const opLimit = 10; // cap per pair after filtering
+          const opResults=[];
+          for(const c of candOps){ if(opResults.length>=opLimit) break; let val; switch(c.op){ case '+': val=c.x+c.y; break; case '-': val=c.x-c.y; break; case '*': val=c.x*c.y; break; case '/': val=Math.abs(c.y)<1e-12? NaN: c.x/c.y; break; case '%': val=Math.abs(c.y)<1e-12? NaN: c.x - c.y*Math.floor(c.x/c.y); break; case '^': val=(c.x===0 && c.y<=0)? NaN: Math.pow(c.x,c.y); break; case '||': val=(Number.isInteger(c.x)&&Number.isInteger(c.y)&& c.x>=0 && c.y>=0)? parseFloat(String(Math.trunc(c.x))+String(Math.trunc(c.y))):NaN; break; case '∑': val=(Number.isInteger(c.x)&&Number.isInteger(c.y)&& c.x<=c.y)? ((c.x+c.y)*(c.y-c.x+1)/2):NaN; break; }
+            if(!isFinite(val)||isNaN(val)) continue; if(useIntegerMode && !isIntegerResult(val)) continue; if(Math.abs(val)>magnitudeSoft && speedAccuracy < 0.95) continue; const diff=Math.abs(val-target); opResults.push({val,diff,op:c.op, left:c.ex, right:c.ey}); }
+          opResults.sort((a,b)=>a.diff-b.diff);
+          for(let oi=0; oi<opResults.length && oi<opLimit; oi++){
+            if(timeExceeded()|| nowFn()>phaseEnd) break;
+            const or=opResults[oi]; const ast={type:'op',operator:or.op,left:or.left,right:or.right,value:or.val};
+            if(restVals.length===0){ // full expression
+              if(updateBest(serializeAST(ast), or.val)) return next; continue; }
+            let newArr = restVals.concat([or.val]);
+            let newExprs = restExpr.concat([ast]);
+            // Opportunistic unary only when few numbers left
+            if(newArr.length<=4){ if(operatorFlags['√'] && or.val>=0){ let sv=or.val; let depth=0; while(depth<Math.min(1,MAX_SQRT_DEPTH)){ sv=Math.sqrt(sv); if(!isFinite(sv)||isNaN(sv)) break; if(useIntegerMode && !isIntegerResult(sv)) break; const sa={type:'op',operator:'√',left:null,right:ast,value:sv}; newArr = restVals.concat([sv]); newExprs = restExpr.concat([sa]); const diffU=Math.abs(sv-target); if(updateBest(serializeAST(sa),sv)) return next; break; } }
+            }
+            const newSig = sig(newArr);
+            const bestSeen = transBest.get(newSig);
+            if(bestSeen!=null && bestSeen <= or.diff) continue; // dominated
+            transBest.set(newSig, or.diff);
+            next.push({ arr:newArr, exprs:newExprs, score:or.diff });
+            if(newArr.length===1){ if(updateBest(serializeAST(newExprs[0]), newArr[0])) return next; }
+          }
+        }
+      }
+      return next;
+    }
+    // Iterative layered beam passes with random permutations for diversification
+    let passes=0;
+    while(!timeExceeded() && nowFn() < phaseEnd && timeLeft()>0){
+      passes++;
+      const baseOrder = (passes===1)? numsInput.slice() : numsInput.slice().sort(()=>Math.random()-0.5);
+      let layerStates=[{ arr: baseOrder.slice(), exprs: baseOrder.map(v=>({type:'num',value:v})), score:Infinity }];
+      for(let L=baseOrder.length; L>1 && !timeExceeded() && nowFn()<phaseEnd; L--){
+        const expanded = expandLayer(layerStates);
+        if(!expanded || expanded.length===0) break;
+        expanded.sort((a,b)=>a.score-b.score);
+        const beamLimit = Math.max(50, Math.floor(BASE_BEAM / (Math.pow(1.35, (n - L)))));
+        layerStates = expanded.slice(0, beamLimit);
+        if(best && best.isExact) return; // early exit
+      }
+      if(best && best.isExact) return;
+      if(passes> (speedAccuracy<0.5? 28: 18) ) break;
+    }
+  }
+  if(largeN){ largeNBeamSearch(); if(best && best.isExact) return best; }
+
+  // ---------------- Phase 3: Multi-frontier best-first (SKIPPED for largeN now) ----------------
+  if(!largeN){
+    currentPhase='frontier';
+    const frontierCaps = (function(){ if(!largeN) return { value:1500, diversity:1500, structural:1500 }; const capV=Math.min(6000, 350*n); return { value: capV, diversity: Math.min(capV*0.75, capV), structural: Math.min(capV*0.63, capV) }; })();
+    const frontiers = { value:[], diversity:[], structural:[] }; // each item: {nums, exprs, diff, signature, age}
+    const signatureBestDiff = new Map(); // signature -> best diff seen
+    function signatureOf(arr){ return arr.slice().sort((a,b)=>a-b).map(x=>Math.round(x*1e6)/1e6).join('|')+'#'+arr.length; }
+    function pushFrontier(type,item){ const sig=item.signature; if(largeN){ const prev=signatureBestDiff.get(sig); if(prev!=null && prev <= item.diff) return; signatureBestDiff.set(sig,item.diff); } const f=frontiers[type]; f.push(item); if(f.length>frontierCaps[type]) f.sort((a,b)=>a.diff-b.diff), f.length=frontierCaps[type]; }
+    (function seedFrontiers(){ const baseExprs=nums.map(v=>({type:'num',value:v})); pushFrontier('value',{nums:nums.slice(), exprs:baseExprs, diff:Infinity, signature:signatureOf(nums), age:0}); })();
+    function expandState(state, limitPairs){ const arr=state.nums; const exprs=state.exprs; const nL=arr.length; if(nL<2) return []; const ENABLE = { '+': !!operatorFlags['+'], '-': !!operatorFlags['-'], '*': !!operatorFlags['*'], '/': !!operatorFlags['/'], '%': !!operatorFlags['%'], '^': !!operatorFlags['^'], '||': !!operatorFlags['||'], '∑': !!operatorFlags['∑'] }; const results=[]; for(let i=0;i<nL-1 && results.length<limitPairs;i++){ for(let j=i+1;j<nL && results.length<limitPairs;j++){ const a=arr[i], b=arr[j]; const ea=exprs[i], eb=exprs[j]; const restNums=[]; const restExprs=[]; for(let t=0;t<nL;t++){ if(t!==i && t!==j){ restNums.push(arr[t]); restExprs.push(exprs[t]); }} function add(op,x,y,EX,EY){ let val; switch(op){ case '+': val=x+y; break; case '-': val=x-y; break; case '*': val=x*y; break; case '/': val=Math.abs(y)<1e-12? NaN: x/y; break; case '%': val=Math.abs(y)<1e-12? NaN: x - y*Math.floor(x/y); break; case '^': val=(x===0&&y<=0)?NaN: Math.pow(x,y); break; case '||': val=(Number.isInteger(x)&&Number.isInteger(y)&& x>=0 && y>=0)? parseFloat(String(Math.trunc(x))+String(Math.trunc(y))):NaN; break; case '∑': val=(Number.isInteger(x)&&Number.isInteger(y)&& x<=y)? ((x+y)*(y-x+1)/2):NaN; break; default: val=NaN; } if(!isFinite(val)||isNaN(val)) return; if(useIntegerMode && !isIntegerResult(val)) return; const ast={type:'op',operator:op,left:EX,right:EY,value:val}; const newNums=restNums.concat([val]); const newExprs=restExprs.concat([ast]); const diff=Math.abs(val-target); results.push({nums:newNums, exprs:newExprs, diff, signature:signatureOf(newNums), age:0}); if(newNums.length===1){ if(updateBest(serializeAST(ast),val)) return; } }
+        add('+',a,b,ea,eb); add('-',a,b,ea,eb); add('-',b,a,eb,ea); add('*',a,b,ea,eb); add('/',a,b,ea,eb); add('/',b,a,eb,ea); if(ENABLE['%']){ add('%',a,b,ea,eb); add('%',b,a,eb,ea);} if(ENABLE['^']){ add('^',a,b,ea,eb); add('^',b,a,eb,ea);} if(ENABLE['||']){ add('||',a,b,ea,eb); add('||',b,a,eb,ea);} if(ENABLE['∑']){ add('∑',a,b,ea,eb); add('∑',b,a,eb,ea);} }
+      }
+      return results;
+    }
+    let stagnationBoost=false; let boostEnd=0; const STAG_THRESHOLD = largeN ? budget*0.08 : budget*0.16;
+    function frontierLoop(){ let loops=0; while(!timeExceeded() && timeLeft()>0 && (nowFn()-start) < (phaseBudget.seed+phaseBudget.smallEx+phaseBudget.frontier)){
+        loops++; if(best && best.isExact) break;
+        if(largeN){
+          if(!stagnationBoost && (nowFn()-lastImprovementTime) > STAG_THRESHOLD){ stagnationBoost=true; boostEnd = nowFn() + Math.min(3000, budget*0.15); frontierCaps.value = Math.min(frontierCaps.value*1.4, 8000); frontierCaps.diversity = Math.min(frontierCaps.diversity*1.35, 7000); frontierCaps.structural = Math.min(frontierCaps.structural*1.3, 6500); }
+          if(stagnationBoost && nowFn() > boostEnd){ stagnationBoost=false; }
+        }
+        let pickType='value'; const dv=frontiers.value.length; const dd=frontiers.diversity.length; const ds=frontiers.structural.length; if(dd<dv*0.6) pickType='diversity'; else if(ds<dv*0.5) pickType='structural'; if(frontiers[pickType].length===0){ pickType='value'; if(frontiers.value.length===0) break; }
+        const f=frontiers[pickType]; f.sort((a,b)=>a.diff-b.diff); const state=f.shift(); if(!state){ continue; }
+        const pairLimit = largeN ? (4 + Math.min(20, Math.floor(n*1.2)) + (stagnationBoost?4:0)) : (4 + Math.min(6, Math.floor(loops/50)));
+        const expansions=expandState(state, pairLimit) || [];
+        for(const ex of expansions){ pushFrontier('value', ex); if(Math.random()<0.5) pushFrontier('diversity', ex); if(Math.random()<0.35) pushFrontier('structural', ex); }
+        if(largeN && loops % 400 ===0){
+          for(let r=0;r<5;r++){ const allNums=numsInput.slice(); if(allNums.length<2) break; const i=Math.floor(Math.random()*allNums.length); let j=Math.floor(Math.random()*allNums.length); if(j===i) j=(j+1)%allNums.length; const a=allNums[i], b=allNums[j]; const ea={type:'num',value:a}, eb={type:'num',value:b}; const ops=['+','*','-']; if(operatorFlags['/']) ops.push('/'); if(operatorFlags['^']) ops.push('^'); const op=ops[Math.floor(Math.random()*ops.length)]; let v; switch(op){ case '+': v=a+b; break; case '*': v=a*b; break; case '-': v=a-b; break; case '/': v=Math.abs(b)<1e-12? a: a/b; break; case '^': v=(a===0 && b<=0)? a: Math.pow(a,b); break; } if(!isFinite(v)||isNaN(v)) continue; const ast={type:'op',operator:op,left:ea,right:eb,value:v}; const newNums=allNums.filter((_,idx)=>idx!==i && idx!==j).concat([v]); const newExprs=newNums.map(val=>({type:'num',value:val}));
+            pushFrontier('diversity',{nums:newNums, exprs:newExprs, diff:Math.abs(v-target), signature:signatureOf(newNums), age:0}); }
+        }
+        if(loops%200===0 && best) postProgress(best);
+        if(loops> (largeN? 180000:60000)) break; }
+    }
+    frontierLoop();
+    if(best && best.isExact) return best;
+  }
+
+  if(best && best.isExact) return best;
+
+  // ---------------- Phase 4: Stochastic Portfolio ----------------
+  currentPhase='stochastic';
+  function mcBuild(iterLimit){ const base=numsInput.slice(); let attempts=0; while(attempts<iterLimit && !timeExceeded()){ attempts++; let order=base.slice().sort(()=>Math.random()-0.5); let exprStack=order.map(v=>({type:'num',value:v})); let valStack=order.slice(); while(valStack.length>1){
+        let i=0,j=1; if(largeN){
+          const L=valStack.length; let bestVar=null, bestGreedy=null; 
+          for(let a=0;a<L;a++){ for(let b=a+1;b<L;b++){ const va=valStack[a], vb=valStack[b]; const diff=Math.abs(va-vb); if(!bestVar || diff>bestVar.diff) bestVar={a,b,diff}; const gScore=Math.min(Math.abs((va+vb)-target), Math.abs(va*vb-target)); if(!bestGreedy || gScore<bestGreedy.score) bestGreedy={a,b,score:gScore}; } }
+          const rnd=Math.random(); if(rnd<0.5 && bestVar){ i=bestVar.a; j=bestVar.b; } else if(rnd<0.8 && bestGreedy){ i=bestGreedy.a; j=bestGreedy.b; } else { i=Math.floor(Math.random()*L); j=i; while(j===i) j=Math.floor(Math.random()*L); if(i>j){ const tmp=i; i=j; j=tmp; } }
+        } else {
+          let bestPair=null; for(let a=0;a<valStack.length;a++){ for(let b=a+1;b<valStack.length;b++){ const A=valStack[a], B=valStack[b]; const score=Math.min(Math.abs(A+B-target), Math.abs(A*B-target)); if(!bestPair || score<bestPair.score) bestPair={i:a,j:b,score}; } } i=bestPair.i; j=bestPair.j; }
+        const a=valStack[i], b=valStack[j]; const ea=exprStack[i], eb=exprStack[j]; valStack.splice(j,1); exprStack.splice(j,1); valStack.splice(i,1); exprStack.splice(i,1);
+        const ops=['+','*','-']; if(operatorFlags['/']) ops.push('/'); if(operatorFlags['^']) ops.push('^'); const op=ops[Math.floor(Math.random()*ops.length)]; let r; switch(op){ case '+': r=a+b; break; case '*': r=a*b; break; case '-': r=a-b; break; case '/': r=Math.abs(b)<1e-12? a: a/b; break; case '^': r=(a===0 && b<=0)? a: Math.pow(a,b); break; } if(!isFinite(r)||isNaN(r)){ r=a+b; }
+        const node={type:'op',operator:op,left:ea,right:eb,value:r}; valStack.push(r); exprStack.push(node); if(valStack.length===1){ if(updateBest(serializeAST(node), r)) return; }
+        if(timeExceeded()) return; }
+    }
+  }
+  function anneal(iterLimit){ if(!best) return; let T=1.0; const startT=nowFn(); for(let k=0;k<iterLimit && !timeExceeded(); k++){ T = Math.max(0.01, 1 - (nowFn()-startT)/(phaseBudget.stochastic)); const exprAST=parseExpressionToAST(best.expression); if(!exprAST) return; const mutant=mutateAST(exprAST); if(!mutant) continue; const val=evaluateAST(mutant); if(!isFinite(val)||isNaN(val)) continue; const diff=Math.abs(val-target); if(diff < best.diff || Math.random() < Math.exp((best.diff-diff)/(T*5))){ updateBest(serializeAST(mutant), val); if(best.isExact) return; } }
+  }
+  function hill(iterLimit){ if(!best) return; for(let k=0;k<iterLimit && !timeExceeded(); k++){ const exprAST=parseExpressionToAST(best.expression); const m=mutateAST(exprAST); if(!m) continue; const val=evaluateAST(m); if(!isFinite(val)||isNaN(val)) continue; if(Math.abs(val-target) < best.diff){ if(updateBest(serializeAST(m),val)) return; } }
+  }
+  function parseExpressionToAST(expr){ try { return null; } catch{ return null; } }
+  function mutateAST(ast){ if(!ast || ast.type==='num') return null; const clone = JSON.parse(JSON.stringify(ast)); const flip={'+':'-','-':'+','*':'/','/':'*','^':'*'}; if(flip[clone.operator]) clone.operator=flip[clone.operator]; return clone; }
+  let stochSlices=0; while(!timeExceeded() && timeLeft()>0 && (nowFn()-start) < (phaseBudget.seed+phaseBudget.smallEx+phaseBudget.frontier+phaseBudget.stochastic) && !(best&&best.isExact)){ mcBuild(largeN?4:2); hill(largeN?4:10); anneal(largeN?2:4); stochSlices++; if(stochSlices> (largeN?8000:4000)) break; }
+  if(best && best.isExact) return best;
+
+  // ---------------- Phase 5: Genetic (simplified placeholder) ----------------
+  currentPhase='genetic';
+  function geneticSimple(){ if(timeExceeded()) return; if(!best) return; for(let g=0; g< (largeN?80:40) && !timeExceeded(); g++){ mcBuild(1); if(best && best.isExact) return; } }
+  if(timeLeft() > budget*0.20 && !best?.isExact){ geneticSimple(); }
+  if(best && best.isExact) return best;
+
+  // ---------------- Phase 6: Intensification ----------------
+  currentPhase='intensify';
+  function intensify(){ if(!best) return; for(let i=0;i< (largeN?800:500) && !timeExceeded(); i++){ hill(4); if(best && best.isExact) return; } }
+  intensify();
+  if(best && best.isExact) return best;
+
+  // ---------------- Phase 7: Padding ----------------
+  currentPhase='padding';
+  while(!timeExceeded() && timeLeft()>0){ mcBuild(1); if(best && best.isExact) break; if(timeLeft()<3) break; }
+
+  return best;
+}
+// -----------------------------------------------------------------------------
+
 self.onmessage = function(e){ const data=e.data; operatorFlags=data.operatorFlags; useIntegerMode=data.useIntegerMode; MAX_SQRT_DEPTH=data.MAX_SQRT_DEPTH; MAX_FACT_DEPTH=data.MAX_FACT_DEPTH; MAX_LOG_DEPTH=data.MAX_LOG_DEPTH||1; MAX_FACTORIAL_INPUT=data.MAX_FACTORIAL_INPUT; MAX_RESULTS=data.MAX_RESULTS||Infinity; if(typeof data.speedAccuracy==='number') speedAccuracy=Math.max(0,Math.min(1,data.speedAccuracy)); if(typeof data.timeBudgetMs==='number') externalTimeBudgetMs = Math.max(50, Math.min(20000, data.timeBudgetMs)); else externalTimeBudgetMs=null;
   if(data.type==='findFirstFast'){
-    calculationCache.clear(); opResultCache.clear(); factorialCache.clear(); lastProgressPost=0; const { nums, target } = data; let closest={ value:null };
-    const found = dfsFindClosest(nums,target,closest);
-    if(found){ self.postMessage({found:true, expression:found.expression, result:found.result}); return; }
-    // Determine if fallback should run (only if time budget not exhausted earlier)
-    const remainingTime = (function(){ if(externalTimeBudgetMs==null) return 0; const now=(self.performance && performance.now)? performance.now(): Date.now(); // derive start from deadline - budget approximation
-      // Not tracking start separately for fallback: if DFS timed out quickly remainingTime ~0
-      return 0; })(); // simplified: fallback still allowed if high speedAccuracy or large budget signaled by slider
-    const needFallback = (speedAccuracy >= 0.82) || (externalTimeBudgetMs!=null && externalTimeBudgetMs > 5000 && lastTimedOut);
-    if(!found && needFallback){ const fb = fallbackExactSearch(nums,target); if(fb && fb.isExact){ self.postMessage({found:true, expression:fb.expression, result:fb.result}); return; } if(fb && (!closest.value || fb.diff < closest.value.diff)) closest.value=fb; }
-    if(closest.value){ self.postMessage({ found:false, closest: closest.value, timedOut:lastTimedOut }); } else { self.postMessage({ found:false, finished:true, timedOut:lastTimedOut }); }
+    // New anytime orchestrator
+    calculationCache.clear(); opResultCache.clear(); factorialCache.clear(); lastProgressPost=0;
+    const { nums, target } = data;
+    const best = fast_runAnytime(nums, target);
+    if(best){ if(best.isExact){ self.postMessage({ found:true, expression:best.expression, result:best.result }); } else { self.postMessage({ found:false, closest: best, timedOut: false }); } } else { self.postMessage({ found:false, finished:true }); }
   } else if(data.type==='findAll' || data.type==='findAllRange') {
     // retain existing exhaustive modes (unchanged structural logic) -- can reuse from previous version
     const { permutations, start, end, target, nums, chunk } = data; const EXACT = EXACT_EPS; let results=[]; let expressionSet=new Set(); let closestResult=null; let smallestDiff=Infinity; calculationCache.clear(); expressionCache.clear(); opResultCache.clear();
