@@ -205,7 +205,20 @@ function fast_runAnytime(numsInput, target){
   let best = null; // {expression,result,diff,isExact, source}
   let bestHistory = [];
   let lastImprovementTime = start;
-  function updateBest(expr,result){ const diff=Math.abs(result-target); if(!best || diff < best.diff){ best={expression:expr,result,diff,isExact:diff<=EXACT_EPS, source:currentPhase}; postProgress(best); bestHistory.push({t:nowFn(), diff}); lastImprovementTime = nowFn(); if(best.isExact){ return true; } } return false; }
+  // Update best ONLY if expression uses all numbers (full=true). Partial expressions are ignored entirely per requirement.
+  function updateBest(expr,result, full=true){
+    if(!full) return false; // enforce: must use all numbers
+    const diff=Math.abs(result-target);
+    // isExact only meaningful for full expressions
+    if(!best || diff < best.diff){
+      best={expression:expr,result,diff,isExact:diff<=EXACT_EPS, source:currentPhase};
+      postProgress(best);
+      bestHistory.push({t:nowFn(), diff});
+      lastImprovementTime = nowFn();
+      if(best.isExact){ return true; }
+    }
+    return false;
+  }
   function timeLeft(){ return deadline - nowFn(); }
   function timeExceeded(){ return nowFn() >= deadline; }
   let currentPhase = 'init';
@@ -225,16 +238,16 @@ function fast_runAnytime(numsInput, target){
   const avg = sum/nums.length;
   const median = nums.slice().sort((a,b)=>a-b)[Math.floor(nums.length/2)];
   const seedExprs = [
-    {expression: '('+nums.join('+')+')', value: sum},
-    {expression: '('+nums.join('*')+')', value: prod},
-    {expression: String(maxV), value:maxV},
-    {expression: String(minV), value:minV},
-    {expression: '('+maxV+'-'+minV+')', value: maxV-minV},
-    {expression: '('+maxV+'+'+minV+')', value: maxV+minV},
-    {expression: '('+avg+')', value: avg},
-    {expression: '('+median+')', value: median}
+    {expression: '('+nums.join('+')+')', value: sum, full:true},
+    {expression: '('+nums.join('*')+')', value: prod, full:true},
+    {expression: String(maxV), value:maxV, full:false},
+    {expression: String(minV), value:minV, full:false},
+    {expression: '('+maxV+'-'+minV+')', value: maxV-minV, full:false},
+    {expression: '('+maxV+'+'+minV+')', value: maxV+minV, full:false},
+    {expression: '('+avg+')', value: avg, full:false},
+    {expression: '('+median+')', value: median, full:false}
   ];
-  for(const s of seedExprs){ if(!isFinite(s.value)||isNaN(s.value)) continue; if(useIntegerMode && !isIntegerResult(s.value)) continue; if(updateBest(s.expression,s.value)) return best; }
+  for(const s of seedExprs){ if(!isFinite(s.value)||isNaN(s.value)) continue; if(useIntegerMode && !isIntegerResult(s.value)) continue; if(updateBest(s.expression,s.value, s.full)) return best; }
 
   // seed DFS (small beam) limited time
   function fast_seedDFS(){
@@ -247,7 +260,7 @@ function fast_runAnytime(numsInput, target){
     const beamBase = largeN ? Math.max(8, Math.floor(n*1.3)) : Math.max(6, 10 - Math.floor(n/2));
     let expansions=0;
     function tExceeded(){ return nowFn() >= localDeadline || nowFn()>=deadline; }
-    function record(val, ast, full){ if(!full) return false; const expr=serializeAST(ast); return updateBest(expr,val); }
+  function record(val, ast, full){ if(!full) return false; const expr=serializeAST(ast); return updateBest(expr,val, true); }
     function dfs(curNums, curExpr){ if(tExceeded()) return true; const k=key(curNums); if(visited.has(k)) return false; visited.add(k); if(curNums.length===1){ const r=curNums[0]; const e=curExpr[0]; if(usesAllNumbers(e, numsInput)) record(r,e,true); return false; }
       const nL=curNums.length; const pairs=[]; for(let i=0;i<nL-1;i++){ for(let j=i+1;j<nL;j++){ const a=curNums[i], b=curNums[j]; let score=Math.abs((a+b)-target); score=Math.min(score, Math.abs((a*b)-target)); score=Math.min(score, Math.abs((a-b)-target)); score=Math.min(score, Math.abs((b-a)-target)); if(Math.abs(b)>1e-12) score=Math.min(score, Math.abs((a/b)-target)); if(Math.abs(a)>1e-12) score=Math.min(score, Math.abs((b/a)-target)); if(allowPower){ if(!(a===0 && b<=0)) score=Math.min(score, Math.abs(Math.pow(a,b)-target)); if(!(b===0 && a<=0)) score=Math.min(score, Math.abs(Math.pow(b,a)-target)); } pairs.push({i,j,score}); } }
       pairs.sort((x,y)=>x.score-y.score);
@@ -339,7 +352,7 @@ function fast_runAnytime(numsInput, target){
             if(timeExceeded()|| nowFn()>phaseEnd) break;
             const or=opResults[oi]; const ast={type:'op',operator:or.op,left:or.left,right:or.right,value:or.val};
             if(restVals.length===0){ // full expression
-              if(updateBest(serializeAST(ast), or.val)) return next; continue; }
+              if(updateBest(serializeAST(ast), or.val, true)) return next; continue; }
             let newArr = restVals.concat([or.val]);
             let newExprs = restExpr.concat([ast]);
             // Opportunistic unary only when few numbers left
@@ -350,7 +363,7 @@ function fast_runAnytime(numsInput, target){
             if(bestSeen!=null && bestSeen <= or.diff) continue; // dominated
             transBest.set(newSig, or.diff);
             next.push({ arr:newArr, exprs:newExprs, score:or.diff });
-            if(newArr.length===1){ if(updateBest(serializeAST(newExprs[0]), newArr[0])) return next; }
+            if(newArr.length===1){ if(updateBest(serializeAST(newExprs[0]), newArr[0], true)) return next; }
           }
         }
       }
