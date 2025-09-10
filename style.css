@@ -1146,6 +1146,12 @@ body.dark-theme .nav-blob {
   box-shadow: 0 6px 18px -8px var(--accent-green) !important;
 }
 
+#toggleSubsetModeBtn.active-mode {
+  background-image: linear-gradient(120deg, var(--accent-blue), #0097fc) !important;
+  color:#fff !important;
+  box-shadow: 0 6px 18px -8px var(--accent-blue) !important;
+}
+
 .mode-btn.active-mode {
   filter:none !important;
 }

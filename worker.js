@@ -193,7 +193,7 @@ function fallbackExactSearch(nums,target){ const ENABLE={ '+':!!operatorFlags['+
   return exact || best; }
 
 // ---------------- FAST MODE ANYTIME MULTI-PHASE IMPLEMENTATION -----------------
-function fast_runAnytime(numsInput, target){
+function fast_runAnytime(numsInput, target, allowPartial=false){
   const nowFn = (self.performance && performance.now) ? ()=>performance.now() : ()=>Date.now();
   const start = nowFn();
   const budget = externalTimeBudgetMs != null ? externalTimeBudgetMs : (400 + Math.pow(speedAccuracy,2.2)*9600);
@@ -207,7 +207,7 @@ function fast_runAnytime(numsInput, target){
   let lastImprovementTime = start;
   // Update best ONLY if expression uses all numbers (full=true). Partial expressions are ignored entirely per requirement.
   function updateBest(expr,result, full=true){
-    if(!full) return false; // enforce: must use all numbers
+    if(!full && !allowPartial) return false; // enforce full unless partial allowed
     const diff=Math.abs(result-target);
     // isExact only meaningful for full expressions
     if(!best || diff < best.diff){
@@ -477,12 +477,33 @@ self.onmessage = function(e){ const data=e.data; operatorFlags=data.operatorFlag
     // New anytime orchestrator
     calculationCache.clear(); opResultCache.clear(); factorialCache.clear(); lastProgressPost=0;
     const { nums, target } = data;
-    const best = fast_runAnytime(nums, target);
+  const best = fast_runAnytime(nums, target, !!data.allowPartial);
     if(best){ if(best.isExact){ self.postMessage({ found:true, expression:best.expression, result:best.result }); } else { self.postMessage({ found:false, closest: best, timedOut: false }); } } else { self.postMessage({ found:false, finished:true }); }
   } else if(data.type==='findAll' || data.type==='findAllRange') {
     // retain existing exhaustive modes (unchanged structural logic) -- can reuse from previous version
     const { permutations, start, end, target, nums, chunk } = data; const EXACT = EXACT_EPS; let results=[]; let expressionSet=new Set(); let closestResult=null; let smallestDiff=Infinity; calculationCache.clear(); expressionCache.clear(); opResultCache.clear();
     function processExpression(ast){ const result=evaluateAST(ast); if(!isFinite(result)||isNaN(result)) return; const diff=Math.abs(result-target); if(usesAllNumbers(ast,nums)){ if(diff<smallestDiff){ smallestDiff=diff; closestResult={ expression:serializeAST(ast), result, diff, isExact: diff<=EXACT }; postProgress(closestResult); } if(diff<=EXACT){ const canonicalAST=canonicalizeAST(ast); const canonicalStr=serializeAST(canonicalAST); if(!expressionSet.has(canonicalStr)){ expressionSet.add(canonicalStr); results.push({ expression: canonicalStr, result }); } } } }
     try { if(data.type==='findAllRange'){ for(let p=start; p<end; p++){ const perm=permutations[p]; const expressions=generateAllGroupings(perm,target); if(!Array.isArray(expressions)) continue; for(let i=0;i<expressions.length;i++){ processExpression(expressions[i]); } } } else { for(let p=0;p<chunk.length;p++){ const perm=chunk[p]; const expressions=generateAllGroupings(perm,target); if(!Array.isArray(expressions)) continue; for(let i=0;i<expressions.length;i++){ processExpression(expressions[i]); } } } self.postMessage({ results, closest: closestResult || null }); } catch(err){ self.postMessage({ results, closest: closestResult || null, error: err.message }); }
+  } else if(data.type==='findAllSubsetsRange') {
+    // NEW: subset mode range evaluation. permutations is array of arrays (each its own base set)
+    const { permutations, start, end, target } = data;
+    let results=[]; let closestResult=null; let smallestDiff=Infinity; const EXACT = EXACT_EPS;
+    const globalExprSet=new Set();
+    function permuteList(arr){ const res=[]; const a=arr.slice(); const c=new Array(a.length).fill(0); res.push(a.slice()); let i=1; while(i<a.length){ if(c[i]<i){ const k = i % 2 ? c[i] : 0; [a[i],a[k]]=[a[k],a[i]]; res.push(a.slice()); c[i]++; i=1; } else { c[i]=0; i++; } } return res; }
+    function processSubset(perm){
+      // Enumerate permutations to maintain same completeness as full-set exhaustive.
+      const perms = permuteList(perm);
+      for(const p of perms){
+        const expressions=generateAllGroupings(p,target); if(!Array.isArray(expressions)) continue;
+        for(const ex of expressions){ const val=evaluateAST(ex); if(!isFinite(val)||isNaN(val)) continue; const diff=Math.abs(val-target); if(diff < smallestDiff){ smallestDiff=diff; closestResult={ expression: serializeAST(ex), result: val, diff, isExact: diff<=EXACT_EPS }; postProgress(closestResult); }
+          if(diff<=EXACT){ const canonicalAST=canonicalizeAST(ex); const canonicalStr=serializeAST(canonicalAST); if(!globalExprSet.has(canonicalStr)){ globalExprSet.add(canonicalStr); results.push({ expression: canonicalStr, result: val, subsetSize: perm.length }); if(results.length >= MAX_RESULTS) return; } }
+        }
+        if(results.length >= MAX_RESULTS) return; if(externalTimeBudgetMs!=null && results.length < MAX_RESULTS){ /* time budget not enforced here; could add if needed */ }
+      }
+    }
+    try {
+      for(let p=start; p<end; p++){ processSubset(permutations[p]); }
+      self.postMessage({ results, closest: closestResult || null });
+    } catch(err){ self.postMessage({ results, closest: closestResult || null, error: err.message }); }
   }
 };

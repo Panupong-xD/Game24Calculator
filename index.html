@@ -101,6 +101,7 @@
               </div>
               <button id="toggleIntegerModeBtn" onclick="toggleIntegerMode()" class="toggle-btn mode-btn">เปิดโหมดจำนวนเต็ม</button>
               <button id="toggleCleanModeBtn" onclick="toggleCleanMode()" class="toggle-btn mode-btn">เปิดโหมดคลีน</button>
+              <button id="toggleSubsetModeBtn" onclick="toggleSubsetMode()" class="toggle-btn mode-btn">เปิดโหมดย่อย (ใช้บางตัวเลข)</button>
             </div>
             
           </div>
@@ -131,6 +132,7 @@ let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^
 let useFastMode = false;
 let useIntegerMode = false;
 let useCleanMode = false; // NEW: efficiency / clean mode
+let useSubsetMode = false; // NEW: subset mode allowing partial use
 // Added: speed-accuracy tuning (0=สุดเร็ว,1=สุดแม่น)
 let fastAccuracy = 0.60; // default bias to slightly accuracy
 let isCalculating = false;
@@ -348,6 +350,13 @@ function toggleCleanMode(){
     btn.textContent = 'เปิดโหมดคลีน';
     btn.classList.remove('active-mode');
   }
+}
+function toggleSubsetMode(){
+  useSubsetMode = !useSubsetMode;
+  const btn = document.getElementById('toggleSubsetModeBtn');
+  if(!btn) return;
+  if(useSubsetMode){ btn.textContent='ปิดโหมดใช้บางตัวเลขได้'; btn.classList.add('active-mode'); }
+  else { btn.textContent='เปิดโหมดใช้บางตัวเลขได้'; btn.classList.remove('active-mode'); }
 }
 
 function updateMaxSqrtDepth() {
@@ -680,7 +689,24 @@ function findSolutions() {
   `;
 
   if (useFastMode) findFirstSolutionFast(nums, target);
+  else if (useSubsetMode) findSubsetSolutionsParallel(nums, target);
   else findAllSolutionsParallel(nums, target);
+}
+
+// --- Subset Mode (partial usage) ---
+function findSubsetSolutionsParallel(nums, target){
+  const n=nums.length; if(n<2){ document.getElementById('results').innerHTML='<h2>ต้องมีอย่างน้อย 2 ตัว</h2>'; isCalculating=false; return; }
+  // generate subsets (size >=2, allow full set too so user gets full answers inside this mode)
+  const subsets=[]; for(let mask=1; mask < (1<<n); mask++){ let bits=mask; let size=0; while(bits){ size += bits & 1; bits >>=1; } if(size<2) continue; const subset=[]; for(let i=0;i<n;i++){ if(mask & (1<<i)) subset.push(nums[i]); } subsets.push(subset); }
+  if(subsets.length===0){ document.getElementById('results').innerHTML='<h2>ไม่มีชุดย่อย</h2>'; isCalculating=false; return; }
+  const total=subsets.length; const numWorkers = navigator.hardwareConcurrency || 4; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; calcStartTime=performance.now();
+  let completed=0; let closest=null; let smallestDiff=Infinity; const EXACT_EPS=1e-12; let lastUI=0; const inProgress=new Map(); let results=[];
+  document.getElementById('results').innerHTML=`<h2>โหมดย่อย: เริ่ม...</h2><p>0/${total}</p><button id="cancel-calc-btn" onclick="cancelCalculation=true; cancelAllWorkers();">ยกเลิก</button>`;
+  function ui(force=false){ const now=performance.now(); if(!force && now-lastUI<120) return; lastUI=now; const pct=Math.round((completed/total)*100); let cTxt='ยังไม่พบ'; if(closest){ cTxt = (closest.diff<=EXACT_EPS? `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ตรงเป๊ะ)` : `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ห่าง ${formatNumber(closest.diff)})`); }
+    document.getElementById('results').innerHTML=`<h2>โหมดย่อย: ${pct}% (${completed}/${total})</h2><p>ดีที่สุด: ${cTxt}</p><button id=\"cancel-calc-btn\" onclick=\"cancelCalculation=true; cancelAllWorkers();\">ยกเลิก</button>`; }
+  function finish(){ const elapsed=((performance.now()-calcStartTime)/1000).toFixed(3); if(results.length){ displayResults(results, elapsed); } else if(closest){ const head = closest.diff<=EXACT_EPS ? 'พบคำตอบตรงเป๊ะ (ชุดย่อย)' : 'คำตอบใกล้สุด (ชุดย่อย)'; document.getElementById('results').innerHTML=`<h2>${head}</h2>${renderElapsed(elapsed)}<ul><li>${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)}${closest.diff<=EXACT_EPS?'':' (ห่าง '+formatNumber(closest.diff)+')'}</li></ul>`; } else { document.getElementById('results').innerHTML=`<h2>ไม่พบคำตอบ</h2>${renderElapsed(elapsed)}`; } isCalculating=false; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; }
+  let next=0; function assign(worker){ if(next>=total) return; const start=next; const end=start+1; next=end; inProgress.set(worker,0); worker._start=start; worker._end=end; worker.postMessage({ type:'findAllSubsetsRange', permutations: subsets, start, end, target, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity }); }
+  for(let w=0; w<numWorkers; w++){ const worker=new Worker('worker.js'); activeWorkers.push(worker); worker.onmessage=e=>{ if(cancelCalculation) return; const d=e.data; if(d.progress){ if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } ui(); return; } if(d.results){ for(const r of d.results){ results.push(r); } } if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } completed += (worker._end - worker._start); inProgress.delete(worker); ui(true); if(completed>=total && inProgress.size===0){ finish(); return; } assign(worker); }; worker.onerror=()=>{ completed += (worker._end - worker._start)||0; inProgress.delete(worker); if(completed>=total && inProgress.size===0) finish(); else assign(worker); }; assign(worker); }
 }
 
 function findFirstSolutionFast(nums, target) {
@@ -775,7 +801,8 @@ function findFirstSolutionFast(nums, target) {
       MAX_LOG_DEPTH,
       MAX_FACTORIAL_INPUT,
       speedAccuracy: fastAccuracy, // keep heuristic scaling
-      timeBudgetMs // NEW explicit cap
+      timeBudgetMs, // NEW explicit cap
+      allowPartial: useSubsetMode // allow partial expressions only when subset mode active
     });
   }
   // periodic UI refresh while waiting
@@ -941,8 +968,7 @@ function findAllSolutionsParallel(nums, target) {
       if (data.closest && (!closestResult || data.closest.diff < smallestDiff)) { smallestDiff=data.closest.diff; closestResult=data.closest; window.closestResultOnCancel=closestResult; }
       // batch finished
       const batchSize = (worker._batchEnd - worker._batchStart);
-      completedPerms += batchSize; inProgress.delete(worker);
-      updateUI(true);
+      completedPerms += batchSize; inProgress.delete(worker); updateUI(true);
       if (finalizeIfDone()) return;
       assignBatch(worker);
       if (nextIndex >= totalPerms && !inProgress.has(worker)){ // no more work assigned to this worker
