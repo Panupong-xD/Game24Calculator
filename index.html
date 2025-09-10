@@ -143,6 +143,8 @@ const MAX_FACTORIAL_INPUT = 12;
 const MAX_RESULTS = 100;
 const CHUNK_SIZE = 20;
 const MAX_INPUT_NUMBERS = 8;
+// NEW: track calculation start time
+let calcStartTime = 0;
 
 const factorialCache = new Map();
 const calculationCache = new Map();
@@ -655,6 +657,7 @@ function findSolutions() {
   isCalculating = true;
   cancelCalculation = false;
   activeWorkers = [];
+  calcStartTime = performance.now(); // start timing
 
   const numContainers = document.querySelectorAll(".num-container");
   const nums = Array.from(numContainers).map(container => parseFloat(container.querySelector(".num").value)).map(v => (isNaN(v) ? 0 : v));
@@ -686,6 +689,7 @@ function findFirstSolutionFast(nums, target) {
   const sliderVal = slider ? parseInt(slider.value) : Math.round(fastAccuracy*100);
   const timeBudgetMs = (sliderVal/5)*1000; // 0..20000ms
   const maxSeconds = (timeBudgetMs/1000).toFixed(2);
+  const elapsed = () => ((performance.now()-calcStartTime)/1000).toFixed(3);
 
   const numWorkers = navigator.hardwareConcurrency || 4;
   const workers = [];
@@ -739,7 +743,8 @@ function findFirstSolutionFast(nums, target) {
         if (e.data.found && !found) {
           found = true;
           const { expression, result } = e.data;
-          document.getElementById("results").innerHTML = `<h2>ผลลัพธ์:</h2><ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)}</li></ul>`;
+          const t = elapsed();
+          document.getElementById("results").innerHTML = `<h2>ผลลัพธ์</h2>${renderElapsed(t)}<ul><li>${prettyPrintExpression(expression)} = ${formatNumber(result)}</li></ul>`;
           terminateWorkers(workers);
           activeWorkers = [];
           isCalculating = false;
@@ -780,18 +785,21 @@ function findFirstSolutionFast(nums, target) {
     if(found) return; // already handled
     if(globalClosest){
       const EXACT_EPS = 1e-12;
+      const t=elapsed();
       if (Math.abs(globalClosest.diff) <= EXACT_EPS) {
         document.getElementById("results").innerHTML = `
-          <h2>ผลลัพธ์:</h2>
+          <h2>ผลลัพธ์</h2>
+          ${renderElapsed(t)}
           <ul><li>${prettyPrintExpression(globalClosest.expression)} = ${formatNumber(globalClosest.result)} (ตรงเป๊ะ)</li></ul>`;
       } else {
         document.getElementById("results").innerHTML = `
           <h2>ไม่พบคำตอบที่ตรงเป๊ะ</h2>
+          ${renderElapsed(t)}
           <h3>คำตอบที่ใกล้ที่สุด:</h3>
           <ul><li>${prettyPrintExpression(globalClosest.expression)} = ${formatNumber(globalClosest.result)} (ห่าง ${formatNumber(globalClosest.diff)})</li></ul>`;
       }
     } else {
-      document.getElementById("results").innerHTML = `<h2>ไม่พบคำตอบภายใน ${maxSeconds}s</h2>`;
+      document.getElementById("results").innerHTML = `<h2>ไม่พบคำตอบภายใน ${maxSeconds}s</h2>${renderElapsed(elapsed())}`;
     }
     terminateWorkers(workers);
     activeWorkers=[];
@@ -807,21 +815,24 @@ function cancelAllWorkers() {
   activeWorkers = [];
   if (isCalculating) {
     isCalculating = false;
+    const elapsed = ((performance.now()-calcStartTime)/1000).toFixed(3);
     if (window.closestResultOnCancel) {
       const EXACT_EPS = 1e-12;
       if (Math.abs(window.closestResultOnCancel.diff) <= EXACT_EPS) {
         document.getElementById("results").innerHTML = `
           <h2>การคำนวณถูกยกเลิก</h2>
+          ${renderElapsed(elapsed)}
           <h3>พบคำตอบที่ตรงเป๊ะ:</h3>
           <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)}</li></ul>`;
       } else {
         document.getElementById("results").innerHTML = `
           <h2>การคำนวณถูกยกเลิก</h2>
+          ${renderElapsed(elapsed)}
           <h3>คำตอบที่ใกล้เคียงที่สุด:</h3>
           <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)} (ห่างจากเป้าหมาย ${formatNumber(window.closestResultOnCancel.diff)})</li></ul>`;
       }
     } else {
-      document.getElementById("results").innerHTML = `<h2>การคำนวณถูกยกเลิก: ไม่พบคำตอบใดๆ</h2>`;
+      document.getElementById("results").innerHTML = `<h2>การคำนวณถูกยกเลิก: ไม่พบคำตอบใดๆ</h2>${renderElapsed(elapsed)}`;
     }
   }
 }
@@ -882,21 +893,24 @@ function findAllSolutionsParallel(nums, target) {
 
   function finalizeIfDone(){
     if (completedPerms >= totalPerms && inProgress.size===0){
+      const elapsed = ((performance.now()-calcStartTime)/1000).toFixed(3);
       // all permutations processed
-      if (results.length > 0){ displayResults(results); }
+      if (results.length > 0){ displayResults(results, elapsed); }
       else if (closestResult){
         if (Math.abs(closestResult.diff) <= EXACT_EPS){
           document.getElementById("results").innerHTML = `
             <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
+            ${renderElapsed(elapsed)}
             <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)}</li></ul>`;
         } else {
           const diff = Math.abs(closestResult.result - target).toPrecision(8);
           document.getElementById("results").innerHTML = `
             <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
+            ${renderElapsed(elapsed)}
             <ul><li>${prettyPrintExpression(closestResult.expression)} = ${formatNumber(closestResult.result)} (ห่างจากเป้าหมาย ${diff})</li></ul>`;
         }
       } else {
-        document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
+        document.getElementById("results").innerHTML = `<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>${renderElapsed(elapsed)}`;
       }
       activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; isCalculating=false; return true;
     }
@@ -1067,12 +1081,11 @@ function prettyPrintExpression(expr) {
   return s;
 }
 
-function displayResults(results) {
+function displayResults(results, elapsedOverride) {
+  const elapsed = elapsedOverride || ((performance.now()-calcStartTime)/1000).toFixed(3);
   if (results.length > 0) {
     if(useCleanMode){
-      // เลือกคำตอบที่ "คลีน" ที่สุดตามเกณฑ์: ใช้ operator ง่ายที่สุด, จำนวน operator น้อย, วงเล็บน้อย, ความยาวสั้น
       function computeCleanScore(expr){
-        // Protect concat (||) and log tokens for single-char operator counting
         const protectedExpr = expr.replace(/\|\|/g,'§').replace(/log(?=\()/g,'Ł');
         const ops = protectedExpr.match(/[+\-*\/^%√!§∑Ł]/g) || [];
         const opCount = ops.length;
@@ -1096,13 +1109,14 @@ function displayResults(results) {
       }
       if(best){
         document.getElementById("results").innerHTML = `
-          <h2>ผลลัพธ์ที่คลีนที่สุด (จาก ${results.length} แบบ):</h2>
+          <h2>ผลลัพธ์ที่คลีนที่สุด (จาก ${results.length} แบบ)</h2>
+          ${renderElapsed(elapsed)}
           <ul><li>${prettyPrintExpression(best.expression)} = ${formatNumber(best.result)}</li></ul>`;
         return;
       }
     }
     document.getElementById("results").innerHTML =
-      `<h2>ผลลัพธ์ (${results.length} รายการ):</h2><ul>` +
+      `<h2>ผลลัพธ์ (${results.length} รายการ)</h2>${renderElapsed(elapsed)}<ul>` +
       results.map((res) => `<li>${prettyPrintExpression(res.expression)} = ${formatNumber(res.result)}</li>`).join("") +
       `</ul>`;
   } else if (window.closestResultOnCancel) {
@@ -1112,16 +1126,23 @@ function displayResults(results) {
     if (diffRaw <= EXACT_EPS) {
       document.getElementById("results").innerHTML = `
         <h2>พบคำตอบที่ตรงเป๊ะ:</h2>
+        ${renderElapsed(elapsed)}
         <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)}</li></ul>`;
     } else {
       const diff = diffRaw.toPrecision(8);
       document.getElementById("results").innerHTML = `
         <h2>คำตอบที่ใกล้เคียงที่สุด:</h2>
+        ${renderElapsed(elapsed)}
         <ul><li>${prettyPrintExpression(window.closestResultOnCancel.expression)} = ${formatNumber(window.closestResultOnCancel.result)} (ห่างจากเป้าหมาย ${diff})</li></ul>`;
     }
   } else {
-    document.getElementById("results").innerHTML = "<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>";
+    document.getElementById("results").innerHTML = `<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>${renderElapsed(elapsed)}`;
   }
+}
+
+// NEW helper to render elapsed time snippet at top
+function renderElapsed(seconds){
+  return `<div class="elapsed-time" style="margin:4px 0 10px; font-size:0.85rem; opacity:0.85;">เวลาใช้ไป: ${seconds} วินาที</div>`;
 }
 
 // Initialize
