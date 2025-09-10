@@ -142,6 +142,7 @@ let MAX_LOG_DEPTH = 1;
 const MAX_FACTORIAL_INPUT = 12;
 const MAX_RESULTS = 100;
 const CHUNK_SIZE = 20;
+const MAX_INPUT_NUMBERS = 8;
 
 const factorialCache = new Map();
 const calculationCache = new Map();
@@ -369,14 +370,14 @@ function updateMaxLogDepth(){
 
 function addNumber() {
   let numbers = document.querySelectorAll(".num-container");
-  if (numbers.length < 8) {
+  if (numbers.length < MAX_INPUT_NUMBERS) {
     let div = document.createElement("div");
     div.className = "num-container";
     let input = document.createElement("input");
     input.type = "number";
     input.className = "num";
     input.placeholder = "0";
-    input.step = "any"; // allow decimals
+    input.step = "any";
     div.appendChild(input);
     document.getElementById("numbers").appendChild(div);
   }

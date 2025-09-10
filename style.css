@@ -45,7 +45,7 @@ body.light-theme {
   --accent-orange: #ff9500;
   --accent-purple: #af52de;
   --shadow-color: rgba(0, 0, 0, 0.1);
-  --card-bg: rgba(255, 255, 255, 0.8);
+  --card-bg: rgba(255, 255, 255, 0.6);
   --card-border: rgba(0, 0, 0, 0.05);
   background-color: var(--bg-primary);
   color: var(--text-primary);
@@ -63,7 +63,7 @@ body.dark-theme {
   --accent-orange: #ff9f0a;
   --accent-purple: #bf5af2;
   --shadow-color: rgba(0, 0, 0, 0.3);
-  --card-bg: rgba(28, 28, 30, 0.8);
+  --card-bg: rgba(28, 28, 30, 0.5);
   --card-border: rgba(255, 255, 255, 0.05);
   background-color: var(--bg-primary);
   color: var(--text-primary);
