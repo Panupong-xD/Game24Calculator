@@ -101,7 +101,7 @@
               </div>
               <button id="toggleIntegerModeBtn" onclick="toggleIntegerMode()" class="toggle-btn mode-btn">เปิดโหมดจำนวนเต็ม</button>
               <button id="toggleCleanModeBtn" onclick="toggleCleanMode()" class="toggle-btn mode-btn">เปิดโหมดคลีน</button>
-              <button id="toggleSubsetModeBtn" onclick="toggleSubsetMode()" class="toggle-btn mode-btn">เปิดโหมดย่อย (ใช้บางตัวเลข)</button>
+              <button id="toggleSubsetModeBtn" onclick="toggleSubsetMode()" class="toggle-btn mode-btn">เปิดโหมดใช้บางตัวเลขได้</button>
             </div>
             
           </div>
@@ -1116,7 +1116,7 @@ function displayResults(results, elapsedOverride) {
         const ops = protectedExpr.match(/[+\-*\/^%√!§∑Ł]/g) || [];
         const opCount = ops.length;
         const parenCount = (expr.match(/\(/g)||[]).length;
-        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':4, '^':3, '√':4, '!':5, '∑':5, 'Ł':4 };
+        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':5, '^':3, '√':4, '!':4, '∑':5, 'Ł':4 };
         let maxWeight = 0; let sumWeight=0;
         ops.forEach(o=>{ const w=weightMap[o]||9; if(w>maxWeight) maxWeight=w; sumWeight+=w; });
         return { maxWeight, sumWeight, opCount, parenCount, length: expr.length };
