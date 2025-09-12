@@ -401,10 +401,9 @@ function addNumber() {
     let div = document.createElement("div");
     div.className = "num-container";
     let input = document.createElement("input");
-    input.type = "number";
+  input.type = "text";
     input.className = "num";
-    input.placeholder = "0";
-    input.step = "any";
+  input.placeholder = "0 | pi | e";
     div.appendChild(input);
     document.getElementById("numbers").appendChild(div);
   }
@@ -708,6 +707,14 @@ function formatNumber(n) {
   return s.replace(/\.0+$/,'').replace(/(\.[0-9]*?)0+$/,'$1');
 }
 
+function parseNumberInput(s){
+  if(typeof s !== 'string') return Number(s);
+  const t = s.trim().toLowerCase();
+  if(t === 'pi' || t === 'π') return Math.PI;
+  if(t === 'e') return Math.E;
+  return parseFloat(t);
+}
+
 function findSolutions() {
   if (isCalculating) return;
   isCalculating = true;
@@ -716,7 +723,9 @@ function findSolutions() {
   calcStartTime = performance.now(); // start timing
 
   const numContainers = document.querySelectorAll(".num-container");
-  const nums = Array.from(numContainers).map(container => parseFloat(container.querySelector(".num").value)).map(v => (isNaN(v) ? 0 : v));
+  const nums = Array.from(numContainers)
+    .map(container => parseNumberInput(container.querySelector(".num").value))
+    .map(v => (isNaN(v) ? 0 : v));
   const target = parseFloat(document.getElementById("target").value);
 
   if (isNaN(target)) {
@@ -1136,6 +1145,11 @@ function prettyPrintExpression(expr) {
   s = s.replace(/\*/g, '×').replace(/\//g, '÷').replace(/%/g, ' mod ');
   // keep || as is, or could replace with ⧺ later
   s = s.replace(/\(([0-9]+)\)/g, '$1');
+  // Replace numeric constants with math symbols
+  s = s.replace(/2\.718281828459045/g, 'e');
+  s = s.replace(/3\.141592653589793/g, 'π');
+  // Remove trivial parentheses around constants
+  s = s.replace(/\((π|e)\)/g, '$1');
   while (
     s.startsWith('(') &&
     s.endsWith(')') &&
@@ -1165,12 +1179,11 @@ function displayResults(results, elapsedOverride) {
         const opCount = ops.length;
         const parenCount = (expr.match(/\(/g)||[]).length;
         const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':5, '^':3, '√':4, '!':4, '∑':5, 'Ł':4, 'ŀ':4 };
-        let maxWeight = 0; let sumWeight=0;
-        ops.forEach(o=>{ const w=weightMap[o]||9; if(w>maxWeight) maxWeight=w; sumWeight+=w; });
-        return { maxWeight, sumWeight, opCount, parenCount, length: expr.length };
+  let sumWeight=0;
+  ops.forEach(o=>{ const w=weightMap[o]||9; sumWeight+=w; });
+  return { sumWeight, opCount, parenCount, length: expr.length };
       }
       function betterScore(a,b){
-        if(a.maxWeight!==b.maxWeight) return a.maxWeight - b.maxWeight;
         if(a.sumWeight!==b.sumWeight) return a.sumWeight - b.sumWeight;
         if(a.opCount!==b.opCount) return a.opCount - b.opCount;
         if(a.parenCount!==b.parenCount) return a.parenCount - b.parenCount;
