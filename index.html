@@ -92,6 +92,12 @@
                   <label for="log-depth">ระดับการซ้อน log สูงสุด: </label>
                   <input type="number" id="log-depth" class="log-depth-input" min="1" value="1" onchange="updateMaxLogDepth()" />
                 </div>
+                <!-- NEW ln operator -->
+                <button id="toggleLnBtn" class="toggle-btn" onclick="toggleOperator('ln')">เปิดการใช้ ln</button>
+                <div id="ln-depth-container" class="log-depth-container" style="display:none;">
+                  <label for="ln-depth">ระดับการซ้อน ln สูงสุด: </label>
+                  <input type="number" id="ln-depth" class="log-depth-input" min="1" value="1" onchange="updateMaxLnDepth()" />
+                </div>
               </div>
               <button id="toggleFastModeBtn" onclick="toggleFastMode()" class="toggle-btn mode-btn">เปิดโหมดหาคำตอบเร็ว</button>
               <div id="fast-accuracy-container" class="fast-accuracy-container" style="display:none; margin-top:8px;">
@@ -128,7 +134,7 @@ function showPage(pageId, sourceBtn=null) {
 }
 
 // Core variables
-let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false, '∑': false, 'log': false };// added log
+let operatorFlags = { '+': true, '-': true, '*': true, '/': true, '%': false, '^': false, '√': false, '!': false, '||': false, '∑': false, 'log': false, 'ln': false };// added log, ln
 let useFastMode = false;
 let useIntegerMode = false;
 let useCleanMode = false; // NEW: efficiency / clean mode
@@ -141,6 +147,7 @@ let activeWorkers = [];
 let MAX_SQRT_DEPTH = 1;
 let MAX_FACT_DEPTH = 1;
 let MAX_LOG_DEPTH = 1;
+let MAX_LN_DEPTH = 1;
 const MAX_FACTORIAL_INPUT = 12;
 const MAX_RESULTS = 100;
 const CHUNK_SIZE = 20;
@@ -168,25 +175,28 @@ function displayOperatorLabel(op){
   if(op=== '%') return 'mod';
   if(op==='||') return 'concat';
   if(op==='∑') return '∑';
+  if(op==='ln') return 'ln';
   return op;
 }
 
 function toggleOperator(op) {
   operatorFlags[op] = !operatorFlags[op];
-  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : op === '!' ? 'Fact' : op === '||' ? 'Concat' : op === '∑' ? 'Sum' : op === 'log' ? 'Log' : 'UNKNOWN'}Btn`);
+  const btn = document.getElementById(`toggle${op === '+' ? 'Add' : op === '-' ? 'Sub' : op === '*' ? 'Mul' : op === '/' ? 'Div' : op === '%' ? 'Mod' : op === '^' ? 'Pow' : op === '√' ? 'Sqrt' : op === '!' ? 'Fact' : op === '||' ? 'Concat' : op === '∑' ? 'Sum' : op === 'log' ? 'Log' : op === 'ln' ? 'Ln' : 'UNKNOWN'}Btn`);
   const disp = displayOperatorLabel(op);
   if (operatorFlags[op]) {
     btn.textContent = `ปิดการใช้ ${disp}`;
     btn.classList.add('active');
     if (op === '√') document.getElementById("sqrt-depth-container").classList.add("active");
     if (op === '!') document.getElementById("fact-depth-container").style.display = "block";
-    if (op === 'log') document.getElementById('log-depth-container').style.display = 'block';
+  if (op === 'log') document.getElementById('log-depth-container').style.display = 'block';
+  if (op === 'ln') document.getElementById('ln-depth-container').style.display = 'block';
   } else {
     btn.textContent = `เปิดการใช้ ${disp}`;
     btn.classList.remove('active');
     if (op === '√') document.getElementById("sqrt-depth-container").classList.remove("active");
     if (op === '!') document.getElementById("fact-depth-container").style.display = "none";
-    if (op === 'log') document.getElementById('log-depth-container').style.display = 'none';
+  if (op === 'log') document.getElementById('log-depth-container').style.display = 'none';
+  if (op === 'ln') document.getElementById('ln-depth-container').style.display = 'none';
   }
 }
 
@@ -379,6 +389,12 @@ function updateMaxLogDepth(){
   if(!isNaN(v) && v>=1) MAX_LOG_DEPTH = v; else input.value = MAX_LOG_DEPTH;
 }
 
+function updateMaxLnDepth(){
+  const input = document.getElementById('ln-depth');
+  const v = parseInt(input.value);
+  if(!isNaN(v) && v>=1) MAX_LN_DEPTH = v; else input.value = MAX_LN_DEPTH;
+}
+
 function addNumber() {
   let numbers = document.querySelectorAll(".num-container");
   if (numbers.length < MAX_INPUT_NUMBERS) {
@@ -471,6 +487,10 @@ function evaluateAST(node) {
         result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN;
         break;
       }
+      case "ln": {
+        result = operatorFlags['ln'] && rightVal>0 ? Math.log(rightVal) : NaN;
+        break;
+      }
       default: return NaN;
     }
   } else {
@@ -499,6 +519,10 @@ function evaluateAST(node) {
         result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN;
         break;
       }
+      case "ln": {
+        result = operatorFlags['ln'] && rightVal>0 ? Math.log(rightVal) : NaN;
+        break;
+      }
       default: return NaN;
     }
   }
@@ -518,6 +542,7 @@ function serializeAST(node) {
   if (node.operator === "√") return `√(${serializeAST(node.right)})`;
   if (node.operator === "!") return `(${serializeAST(node.right)})!`;
   if (node.operator === "log") return `log(${serializeAST(node.right)})`;
+  if (node.operator === "ln") return `ln(${serializeAST(node.right)})`;
   return `(${node.left ? serializeAST(node.left) : ""} ${node.operator} ${serializeAST(node.right)})`;
 }
 
@@ -550,6 +575,7 @@ function getFactDepth(node) {
 }
 
 function getLogDepth(node){ if(node.type==='num') return 0; if(node.operator==='log') return 1+getLogDepth(node.right); const ld=node.left?getLogDepth(node.left):0; const rd=node.right?getLogDepth(node.right):0; return Math.max(ld,rd); }
+function getLnDepth(node){ if(node.type==='num') return 0; if(node.operator==='ln') return 1+getLnDepth(node.right); const ld=node.left?getLnDepth(node.left):0; const rd=node.right?getLnDepth(node.right):0; return Math.max(ld,rd); }
 
 function generateAllGroupings(nums, target) {
   const memoized = new Map();
@@ -582,6 +608,15 @@ function generateAllGroupings(nums, target) {
         let currentExpr = numNode;
         for(let i=1;i<=MAX_LOG_DEPTH && operatorFlags['log'];i++){
           currentExpr = { type:'op', operator:'log', left:null, right: currentExpr };
+          const logResult = evaluateAST(currentExpr);
+          if(!isNaN(logResult) && (!useIntegerMode || isIntegerResult(logResult))) result.push(currentExpr); else break;
+        }
+      }
+      // NEW: base case ln nesting
+      if (operatorFlags['ln'] && nums[start] > 0){
+        let currentExpr = numNode;
+        for(let i=1;i<=MAX_LN_DEPTH && operatorFlags['ln'];i++){
+          currentExpr = { type:'op', operator:'ln', left:null, right: currentExpr };
           const logResult = evaluateAST(currentExpr);
           if(!isNaN(logResult) && (!useIntegerMode || isIntegerResult(logResult))) result.push(currentExpr); else break;
         }
@@ -637,6 +672,18 @@ function generateAllGroupings(nums, target) {
                     let currentExpr = newExpr;
                     for(let depth=1; depth <= MAX_LOG_DEPTH - getLogDepth(newExpr); depth++){
                       currentExpr = { type:'op', operator:'log', left:null, right: currentExpr };
+                      const logResult = evaluateAST(currentExpr);
+                      if(!isNaN(logResult) && (!useIntegerMode || isIntegerResult(logResult))) result.push(currentExpr); else break;
+                    }
+                  }
+                }
+                // NEW: ln chaining (shares depth budget with log)
+        if (operatorFlags['ln'] && getLnDepth(newExpr) < MAX_LN_DEPTH){
+                  const baseVal = evaluateAST(newExpr);
+                  if(!isNaN(baseVal) && baseVal > 0){
+                    let currentExpr = newExpr;
+          for(let depth=1; depth <= MAX_LN_DEPTH - getLnDepth(newExpr); depth++){
+                      currentExpr = { type:'op', operator:'ln', left:null, right: currentExpr };
                       const logResult = evaluateAST(currentExpr);
                       if(!isNaN(logResult) && (!useIntegerMode || isIntegerResult(logResult))) result.push(currentExpr); else break;
                     }
@@ -705,7 +752,7 @@ function findSubsetSolutionsParallel(nums, target){
   function ui(force=false){ const now=performance.now(); if(!force && now-lastUI<120) return; lastUI=now; const pct=Math.round((completed/total)*100); let cTxt='ยังไม่พบ'; if(closest){ cTxt = (closest.diff<=EXACT_EPS? `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ตรงเป๊ะ)` : `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ห่าง ${formatNumber(closest.diff)})`); }
     document.getElementById('results').innerHTML=`<h2>โหมดย่อย: ${pct}% (${completed}/${total})</h2><p>ดีที่สุด: ${cTxt}</p><button id=\"cancel-calc-btn\" onclick=\"cancelCalculation=true; cancelAllWorkers();\">ยกเลิก</button>`; }
   function finish(){ const elapsed=((performance.now()-calcStartTime)/1000).toFixed(3); if(results.length){ displayResults(results, elapsed); } else if(closest){ const head = closest.diff<=EXACT_EPS ? 'พบคำตอบตรงเป๊ะ (ชุดย่อย)' : 'คำตอบใกล้สุด (ชุดย่อย)'; document.getElementById('results').innerHTML=`<h2>${head}</h2>${renderElapsed(elapsed)}<ul><li>${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)}${closest.diff<=EXACT_EPS?'':' (ห่าง '+formatNumber(closest.diff)+')'}</li></ul>`; } else { document.getElementById('results').innerHTML=`<h2>ไม่พบคำตอบ</h2>${renderElapsed(elapsed)}`; } isCalculating=false; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; }
-  let next=0; function assign(worker){ if(next>=total) return; const start=next; const end=start+1; next=end; inProgress.set(worker,0); worker._start=start; worker._end=end; worker.postMessage({ type:'findAllSubsetsRange', permutations: subsets, start, end, target, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity }); }
+  let next=0; function assign(worker){ if(next>=total) return; const start=next; const end=start+1; next=end; inProgress.set(worker,0); worker._start=start; worker._end=end; worker.postMessage({ type:'findAllSubsetsRange', permutations: subsets, start, end, target, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity }); }
   for(let w=0; w<numWorkers; w++){ const worker=new Worker('worker.js'); activeWorkers.push(worker); worker.onmessage=e=>{ if(cancelCalculation) return; const d=e.data; if(d.progress){ if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } ui(); return; } if(d.results){ for(const r of d.results){ results.push(r); } } if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } completed += (worker._end - worker._start); inProgress.delete(worker); ui(true); if(completed>=total && inProgress.size===0){ finish(); return; } assign(worker); }; worker.onerror=()=>{ completed += (worker._end - worker._start)||0; inProgress.delete(worker); if(completed>=total && inProgress.size===0) finish(); else assign(worker); }; assign(worker); }
 }
 
@@ -799,6 +846,7 @@ function findFirstSolutionFast(nums, target) {
       MAX_SQRT_DEPTH,
       MAX_FACT_DEPTH,
       MAX_LOG_DEPTH,
+      MAX_LN_DEPTH,
       MAX_FACTORIAL_INPUT,
       speedAccuracy: fastAccuracy, // keep heuristic scaling
       timeBudgetMs, // NEW explicit cap
@@ -946,7 +994,7 @@ function findAllSolutionsParallel(nums, target) {
 
   function assignBatch(worker){
     if (cancelCalculation) return; if (nextIndex >= totalPerms){ return; }
-    const start = nextIndex; const size = Math.min(baseBatchSize, totalPerms - nextIndex); const end = start + size; nextIndex = end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'findAllRange', permutations, start, end, target, nums, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity });
+    const start = nextIndex; const size = Math.min(baseBatchSize, totalPerms - nextIndex); const end = start + size; nextIndex = end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'findAllRange', permutations, start, end, target, nums, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity });
     if (nextIndex < totalPerms) adaptiveBatchSize();
   }
 
@@ -1112,11 +1160,11 @@ function displayResults(results, elapsedOverride) {
   if (results.length > 0) {
     if(useCleanMode){
       function computeCleanScore(expr){
-        const protectedExpr = expr.replace(/\|\|/g,'§').replace(/log(?=\()/g,'Ł');
-        const ops = protectedExpr.match(/[+\-*\/^%√!§∑Ł]/g) || [];
+        const protectedExpr = expr.replace(/\|\|/g,'§').replace(/log(?=\()/g,'Ł').replace(/ln(?=\()/g,'ŀ');
+        const ops = protectedExpr.match(/[+\-*\/^%√!§∑Łŀ]/g) || [];
         const opCount = ops.length;
         const parenCount = (expr.match(/\(/g)||[]).length;
-        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':5, '^':3, '√':4, '!':4, '∑':5, 'Ł':4 };
+        const weightMap = { '+':1, '-':1, '*':2, '/':2, '%':3, '§':5, '^':3, '√':4, '!':4, '∑':5, 'Ł':4, 'ŀ':4 };
         let maxWeight = 0; let sumWeight=0;
         ops.forEach(o=>{ const w=weightMap[o]||9; if(w>maxWeight) maxWeight=w; sumWeight+=w; });
         return { maxWeight, sumWeight, opCount, parenCount, length: expr.length };
