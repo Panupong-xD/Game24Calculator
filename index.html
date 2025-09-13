@@ -24,17 +24,16 @@
       <div id="calculation-page" class="page active">
         <div class="container">
           <h1>คำนวณผลลัพธ์ที่เป็นไปได้</h1>
-          <p>กรอกตัวเลขและผลลัพธ์ที่ต้องการคำนวณ</p>
+          <p>กรอกตัวเลขและผลลัพธ์ที่ต้องการคำนวณ (number, pi, e)</p>
           <div id="numbers" class="number-container"></div>
           <button class="add-btn" onclick="addNumber()">+</button>
           <button class="remove-btn" onclick="removeNumber()">-</button>
           <br />
           <input
-            type="number"
+            type="text"
             id="target"
             placeholder="ผลลัพธ์"
             class="easy-input"
-            step="any"
           />
           <br />
           <button class="calc-btn" onclick="findSolutions()">ค้นหาคำตอบ</button>
@@ -403,7 +402,7 @@ function addNumber() {
     let input = document.createElement("input");
   input.type = "text";
     input.className = "num";
-  input.placeholder = "0 | pi | e";
+  input.placeholder = "0";
     div.appendChild(input);
     document.getElementById("numbers").appendChild(div);
   }
@@ -726,7 +725,7 @@ function findSolutions() {
   const nums = Array.from(numContainers)
     .map(container => parseNumberInput(container.querySelector(".num").value))
     .map(v => (isNaN(v) ? 0 : v));
-  const target = parseFloat(document.getElementById("target").value);
+  const target = parseNumberInput(document.getElementById("target").value);
 
   if (isNaN(target)) {
     document.getElementById("results").innerHTML = "<h2>กรุณากรอกผลลัพธ์ที่ต้องการ</h2>";
