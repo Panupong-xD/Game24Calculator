@@ -1168,6 +1168,177 @@ function prettyPrintExpression(expr) {
   return s;
 }
 
+// --- Dynamic Results Filtering (UI + Logic) ---
+let _lastResults = [];
+let _lastElapsed = '0.000';
+let _currentFilterQuery = '';
+let _filterVisible = false; // default hidden
+// New: operator chip states (any | include | exclude)
+const _allFilterOps = ['+','-','*','/','%','^','√','!','∑','||','log','ln'];
+let _filterOpStates = Object.fromEntries(_allFilterOps.map(op=>[op,'any']));
+
+function normalizeOpToken(tok){
+  const t = tok.toLowerCase();
+  if (t === '×' || t === '*') return '*';
+  if (t === '÷' || t === '/') return '/';
+  if (t === 'mod' || t === '%') return '%';
+  if (t === '^' || t === 'pow' || t === 'power') return '^';
+  if (t === 'sqrt' || t === '√') return '√';
+  if (t === '!' || t === 'fact' || t === 'factorial') return '!';
+  if (t === 'sum' || t === 'sigma' || t === '∑') return '∑';
+  if (t === 'concat' || t === '||') return '||';
+  if (t === 'log') return 'log';
+  if (t === 'ln') return 'ln';
+  if (t === '+') return '+';
+  if (t === '-' || t === 'minus' || t === 'sub') return '-';
+  if (t === 'add' || t === 'plus') return '+';
+  return null;
+}
+
+function parseFilterQuery(q){
+  const includeOps = new Set();
+  const excludeOps = new Set();
+  const includeTerms = new Set();
+  const excludeTerms = new Set();
+  if(!q) return { includeOps, excludeOps, includeTerms, excludeTerms };
+  const tokens = q.trim().split(/\s+/).filter(Boolean);
+  for(const raw of tokens){
+    if(raw.startsWith('-') && raw.length>1){
+      const body = raw.slice(1);
+      const op = normalizeOpToken(body);
+      if(op) excludeOps.add(op); else excludeTerms.add(body.toLowerCase());
+    } else {
+      const op = normalizeOpToken(raw);
+      if(op) includeOps.add(op); else includeTerms.add(raw.toLowerCase());
+    }
+  }
+  // resolve conflicts: includes win over excludes
+  for(const op of includeOps){ excludeOps.delete(op); }
+  return { includeOps, excludeOps, includeTerms, excludeTerms };
+}
+
+function exprHasOperator(expr, op){
+  // check raw expression string, not pretty, to avoid symbol replacement issues
+  switch(op){
+    case '||': return expr.includes('||');
+    case 'log': return expr.includes('log(');
+    case 'ln': return expr.includes('ln(');
+    case '√': return expr.includes('√');
+    case '∑': return expr.includes('∑');
+    case '!': return expr.includes('!');
+    case '^': return expr.includes('^');
+    case '%': return expr.includes('%');
+    case '*': return expr.includes('*');
+    case '/': return expr.includes('/');
+    case '+': return expr.includes('+');
+    case '-': return expr.includes('-');
+    default: return false;
+  }
+}
+
+function filterResults(results, query){
+  const { includeOps, excludeOps, includeTerms, excludeTerms } = parseFilterQuery(query);
+  return results.filter(r => {
+    const expr = r.expression || '';
+    const pretty = prettyPrintExpression(expr).toLowerCase();
+    // includes: all must match
+    for(const op of includeOps){ if(!exprHasOperator(expr, op)) return false; }
+    for(const term of includeTerms){ if(!pretty.includes(term)) return false; }
+    // excludes: none must match
+    for(const op of excludeOps){ if(exprHasOperator(expr, op)) return false; }
+    for(const term of excludeTerms){ if(pretty.includes(term)) return false; }
+    return true;
+  });
+}
+
+function buildResultsContainer(total, elapsed){
+  // Build container with chip-based filter controls
+  document.getElementById("results").innerHTML = `
+    <div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <h2 style="margin:0;">ผลลัพธ์ (<span id=\"filtered-count\">0</span>/${total} รายการ)</h2>
+      <button id=\"toggle-filters\" class=\"toggle-btn\" style=\"padding:8px 12px;\">${_filterVisible ? 'ซ่อนตัวกรอง' : 'แสดงตัวกรอง'}</button>
+    </div>
+    ${renderElapsed(elapsed)}
+    <div id="results-filter" class="results-filter" style="margin:8px 0 10px; display:${_filterVisible ? 'block' : 'none'};">
+      <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+        ${_allFilterOps.map(op=>{
+          const label = op==='*'?'×': op==='/'?'÷': op==='%'?'mod': op==='||'?'concat': op;
+          return `<button class="chip" data-op="${op}" data-state="${_filterOpStates[op]}" 
+            style="padding:10px 12px; border-radius:14px; border:1px solid var(--card-border); background: var(--bg-secondary); color: var(--text-primary); cursor:pointer; font-size:0.95rem; min-width:88px; height:40px; display:inline-flex; align-items:center; justify-content:center;">${label}</button>`;
+        }).join('')}
+      </div>
+      <div style="font-size:0.8rem; opacity:0.75; margin-top:4px;">
+        แตะปุ่มเพื่อวนสถานะ: ไม่กำหนด → ต้องมี → ไม่เอา
+      </div>
+    </div>
+    <ul id="results-list"></ul>
+  `;
+  // wire toggle
+  const toggleBtn = document.getElementById('toggle-filters');
+  const filterBox = document.getElementById('results-filter');
+  if(toggleBtn && filterBox){
+    toggleBtn.addEventListener('click', ()=>{
+      _filterVisible = !_filterVisible;
+      filterBox.style.display = _filterVisible ? 'block' : 'none';
+      toggleBtn.textContent = _filterVisible ? 'ซ่อนตัวกรอง' : 'แสดงตัวกรอง';
+    });
+  }
+  // apply chip styles and events
+  const chips = Array.from(document.querySelectorAll('#results-filter .chip'));
+  chips.forEach(btn=>{
+    const op = btn.dataset.op;
+    // style based on state
+    function applyStyle(){
+      const st = _filterOpStates[op];
+      if(st==='include'){
+        btn.style.background = 'var(--bg-secondary)';
+        btn.style.borderColor = 'var(--accent-green)';
+        btn.style.color = 'var(--text-primary)';
+      } else if(st==='exclude'){
+        btn.style.background = 'var(--bg-secondary)';
+        btn.style.borderColor = 'var(--accent-red)';
+        btn.style.color = 'var(--text-primary)';
+      } else {
+        btn.style.background = 'var(--bg-secondary)';
+        btn.style.borderColor = 'var(--card-border)';
+        btn.style.color = 'var(--text-primary)';
+      }
+      btn.dataset.state = st;
+    }
+    applyStyle();
+    btn.addEventListener('click', ()=>{
+      const cur = _filterOpStates[op];
+      const next = cur==='any' ? 'include' : cur==='include' ? 'exclude' : 'any';
+      _filterOpStates[op] = next;
+      applyStyle();
+      updateFilteredResultsList();
+    });
+  });
+}
+
+function updateFilteredResultsList(){
+  // build include/exclude sets from chip states
+  const includeOps = new Set();
+  const excludeOps = new Set();
+  for(const op of _allFilterOps){
+    const st = _filterOpStates[op];
+    if(st==='include') includeOps.add(op);
+    else if(st==='exclude') excludeOps.add(op);
+  }
+  const filtered = _lastResults.filter(r => {
+    const expr = r.expression || '';
+    for(const op of includeOps){ if(!exprHasOperator(expr, op)) return false; }
+    for(const op of excludeOps){ if(exprHasOperator(expr, op)) return false; }
+    return true;
+  });
+  const listEl = document.getElementById('results-list');
+  const countEl = document.getElementById('filtered-count');
+  if(countEl) countEl.textContent = String(filtered.length);
+  if(listEl){
+    listEl.innerHTML = filtered.map(res => `<li>${prettyPrintExpression(res.expression)} = ${formatNumber(res.result)}</li>`).join('');
+  }
+}
+
 function displayResults(results, elapsedOverride) {
   const elapsed = elapsedOverride || ((performance.now()-calcStartTime)/1000).toFixed(3);
   if (results.length > 0) {
@@ -1201,12 +1372,13 @@ function displayResults(results, elapsedOverride) {
         return;
       }
     }
-    document.getElementById("results").innerHTML =
-      `<h2>ผลลัพธ์ (${results.length} รายการ)</h2>${renderElapsed(elapsed)}<ul>` +
-      results.map((res) => `<li>${prettyPrintExpression(res.expression)} = ${formatNumber(res.result)}</li>`).join("") +
-      `</ul>`;
+  // Save and render with dynamic filtering UI
+  _lastResults = results.slice();
+  _lastElapsed = elapsed;
+  buildResultsContainer(results.length, elapsed);
+  updateFilteredResultsList();
   } else if (window.closestResultOnCancel) {
-    const target = parseFloat(document.getElementById("target").value);
+  const target = parseNumberInput(document.getElementById("target").value);
     const EXACT_EPS = 1e-12;
     const diffRaw = Math.abs(window.closestResultOnCancel.result - target);
     if (diffRaw <= EXACT_EPS) {

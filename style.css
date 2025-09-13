@@ -782,9 +782,8 @@ button:hover::after {
   }
 }
 
-#results::-webkit-scrollbar-thumb {
-  background-image: linear-gradient(var(--accent-blue), var(--accent-purple));
-}
+/* Simplify scrollbar to minimal */
+#results::-webkit-scrollbar-thumb { background: var(--bg-tertiary); }
 
 .container:hover {
   transform: translateY(-6px) scale(1.01);
@@ -798,24 +797,8 @@ button:hover::after {
   position: relative;
 }
 
-#results h2::after {
-  content:"";
-  position:absolute;
-  left:0;
-  bottom:-6px;
-  height:2px;
-  width:100%;
-  background:linear-gradient(90deg,var(--accent-blue),var(--accent-purple));
-  border-radius:2px;
-  animation: progressGlow 3s linear infinite;
-  opacity:.35;
-}
-
-@keyframes progressGlow {
-  0%{filter:blur(0) brightness(1);}
-  50%{filter:blur(1px) brightness(1.3);}
-  100%{filter:blur(0) brightness(1);}
-}
+/* Remove animated glow under results title for cleaner look */
+#results h2::after { display:none; }
 
 body.dark-theme::after {
   opacity:0.25;
@@ -859,6 +842,11 @@ body.dark-theme .container::after {
   font-weight: 600;
   transition: all 0.3s ease;
 }
+
+#results-filter .chip {
+  box-shadow: none;
+}
+
 
 .status-icon.loading {
   background: var(--accent-orange);
