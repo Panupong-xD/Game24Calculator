@@ -69,6 +69,59 @@ body.dark-theme {
   color: var(--text-primary);
 }
 
+/* ================= Light theme as Low-Power mode ================= */
+/* In Light mode, prioritize performance by toning down heavy visuals */
+body.light-theme * { will-change: auto !important; }
+/* Remove heavy blurs */
+body.light-theme .container,
+body.light-theme .nav-container,
+body.light-theme .nav-glass-switch,
+body.light-theme .nav-blob,
+body.light-theme #results,
+body.light-theme .operator-buttons button.toggle-btn,
+body.light-theme .mode-btn,
+body.light-theme input[type="number"],
+body.light-theme .easy-input,
+body.light-theme .num {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Reduce transitions to avoid extra compositing */
+body.light-theme .container,
+body.light-theme .nav-container,
+body.light-theme #results,
+body.light-theme button { transition: none !important; }
+/* Lighten shadows */
+body.light-theme .container,
+body.light-theme #results,
+body.light-theme .option-group { box-shadow: 0 2px 12px var(--shadow-color) !important; }
+body.light-theme .nav-container,
+body.light-theme .nav-blob,
+body.light-theme .nav-glass-switch { box-shadow: 0 2px 12px var(--shadow-color) !important; }
+body.light-theme button { box-shadow: 0 2px 8px rgba(0,0,0,0.25) !important; }
+/* Pause decorative animations */
+body.light-theme::before { animation: none !important; }
+body.light-theme #fast-accuracy-slider::after { animation: none !important; }
+body.light-theme #results li { animation: none !important; }
+/* Keep gradient title but stop the moving animation */
+body.light-theme h1 { animation: none !important; }
+/* Simplify slider visuals */
+body.light-theme #fast-accuracy-slider::before {
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+body.light-theme #fast-accuracy-slider::-webkit-slider-thumb,
+body.light-theme #fast-accuracy-slider::-moz-range-thumb {
+  box-shadow: 0 2px 8px rgba(0,0,0,0.35) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+/* Tone down global decorative layers */
+body.light-theme::after { opacity: 0.18 !important; }
+body.light-theme .container::before,
+body.light-theme .container::after { opacity: .22 !important; }
+
 .nav-container {
   position: fixed;
   top: 20px;
