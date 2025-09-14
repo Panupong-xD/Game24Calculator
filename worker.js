@@ -519,10 +519,11 @@ self.onmessage = function(e){ const data=e.data; operatorFlags=data.operatorFlag
     const valueMap = new Map(); // v -> Set(expressions)
     calculationCache.clear(); expressionCache.clear(); opResultCache.clear(); factorialCache.clear();
     const EXACT = EXACT_EPS;
+    function isNearIntegerStrict(x){ const r=Math.round(x); return Math.abs(x - r) <= EXACT_EPS; }
     function addExpr(val, ast){
       if(!Number.isFinite(val)) return; // only finite values
-      // check integer-ish
-      if(!isIntegerResult(val)) return;
+      // strict integer check for analyze mode (exclude near-misses like sqrt(2401 - ε))
+      if(!isNearIntegerStrict(val)) return;
       const v = Math.round(val);
       if(v < minTarget || v > maxTarget) return;
       const canonicalAST = canonicalizeAST(ast);
