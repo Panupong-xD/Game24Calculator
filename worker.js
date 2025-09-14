@@ -513,5 +513,45 @@ self.onmessage = function(e){ const data=e.data; operatorFlags=data.operatorFlag
       for(let p=start; p<end; p++){ processSubset(permutations[p]); }
       self.postMessage({ results, closest: closestResult || null });
     } catch(err){ self.postMessage({ results, closest: closestResult || null, error: err.message }); }
+  } else if(data.type==='analyzeRange'){
+    // Analyze mode: aggregate integer results that fall within [minTarget..maxTarget]
+    const { permutations, start, end, minTarget, maxTarget } = data;
+    const valueMap = new Map(); // v -> Set(expressions)
+    calculationCache.clear(); expressionCache.clear(); opResultCache.clear(); factorialCache.clear();
+    const EXACT = EXACT_EPS;
+    function addExpr(val, ast){
+      if(!Number.isFinite(val)) return; // only finite values
+      // check integer-ish
+      if(!isIntegerResult(val)) return;
+      const v = Math.round(val);
+      if(v < minTarget || v > maxTarget) return;
+      const canonicalAST = canonicalizeAST(ast);
+      const exprStr = serializeAST(canonicalAST);
+      let set = valueMap.get(v);
+      if(!set){ set = new Set(); valueMap.set(v, set); }
+      set.add(exprStr);
+    }
+    try {
+      let processed = 0; const postEvery = 1;
+      for(let p=start; p<end; p++){
+        const perm = permutations[p];
+        const expressions = generateAllGroupings(perm, 0);
+        if(Array.isArray(expressions)){
+          for(let i=0;i<expressions.length;i++){
+            const ex = expressions[i];
+            const val = evaluateAST(ex);
+            if(!isFinite(val) || isNaN(val)) continue;
+            addExpr(val, ex);
+          }
+        }
+        processed++;
+        if(processed % postEvery === 0){
+          self.postMessage({ progress:true, processed });
+        }
+      }
+      // convert to transportable array
+      const analysis = Array.from(valueMap.entries()).map(([value,set])=>({ value, expressions: Array.from(set) }));
+      self.postMessage({ analysis });
+    } catch(err){ self.postMessage({ analysis: Array.from(valueMap.entries()).map(([value,set])=>({ value, expressions:Array.from(set) })), error: err.message }); }
   }
 };

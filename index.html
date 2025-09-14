@@ -29,12 +29,21 @@
           <button class="add-btn" onclick="addNumber()">+</button>
           <button class="remove-btn" onclick="removeNumber()">-</button>
           <br />
-          <input
-            type="text"
-            id="target"
-            placeholder="ผลลัพธ์"
-            class="easy-input"
-          />
+          <div id="target-single-box">
+            <input
+              type="text"
+              id="target"
+              placeholder="ผลลัพธ์"
+              class="easy-input"
+            />
+          </div>
+          <div id="target-range-box" style="display:none; gap:8px; align-items:center;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="text" id="target-min" placeholder="ช่วงต่ำสุด (int)" class="easy-input" style="min-width:120px;" />
+              <span style="opacity:0.7;">ถึง</span>
+              <input type="text" id="target-max" placeholder="ช่วงสูงสุด (int)" class="easy-input" style="min-width:120px;" />
+            </div>
+          </div>
           <br />
           <button class="calc-btn" onclick="findSolutions()">ค้นหาคำตอบ</button>
           <div id="results"></div>
@@ -107,6 +116,7 @@
               <button id="toggleIntegerModeBtn" onclick="toggleIntegerMode()" class="toggle-btn mode-btn">เปิดโหมดจำนวนเต็ม</button>
               <button id="toggleCleanModeBtn" onclick="toggleCleanMode()" class="toggle-btn mode-btn">เปิดโหมดคลีน</button>
               <button id="toggleSubsetModeBtn" onclick="toggleSubsetMode()" class="toggle-btn mode-btn">เปิดโหมดใช้บางตัวเลขได้</button>
+              <button id="toggleAnalyzeModeBtn" onclick="toggleAnalyzeMode()" class="toggle-btn mode-btn">เปิดโหมดวิเคราะห์ช่วงผลลัพธ์</button>
             </div>
             
           </div>
@@ -138,6 +148,7 @@ let useFastMode = false;
 let useIntegerMode = false;
 let useCleanMode = false; // NEW: efficiency / clean mode
 let useSubsetMode = false; // NEW: subset mode allowing partial use
+let useAnalyzeMode = false; // NEW: analyze integers in range
 // Added: speed-accuracy tuning (0=สุดเร็ว,1=สุดแม่น)
 let fastAccuracy = 0.60; // default bias to slightly accuracy
 let isCalculating = false;
@@ -367,6 +378,29 @@ function toggleSubsetMode(){
   if(!btn) return;
   if(useSubsetMode){ btn.textContent='ปิดโหมดใช้บางตัวเลขได้'; btn.classList.add('active-mode'); }
   else { btn.textContent='เปิดโหมดใช้บางตัวเลขได้'; btn.classList.remove('active-mode'); }
+}
+
+function toggleAnalyzeMode(){
+  useAnalyzeMode = !useAnalyzeMode;
+  const btn = document.getElementById('toggleAnalyzeModeBtn');
+  if(!btn) return;
+  if(useAnalyzeMode){ btn.textContent='ปิดโหมดวิเคราะห์ช่วงผลลัพธ์'; btn.classList.add('active-mode'); }
+  else { btn.textContent='เปิดโหมดวิเคราะห์ช่วงผลลัพธ์'; btn.classList.remove('active-mode'); }
+  updateTargetInputVisibility();
+}
+
+function updateTargetInputVisibility(){
+  const boxSingle = document.getElementById('target-single-box');
+  const boxRange = document.getElementById('target-range-box');
+  if(!boxSingle || !boxRange) return;
+  if(useAnalyzeMode){
+    boxSingle.style.display='none';
+    boxRange.style.display='flex';
+    boxRange.style.justifyContent='center';
+  } else {
+    boxSingle.style.display='block';
+    boxRange.style.display='none';
+  }
 }
 
 function updateMaxSqrtDepth() {
@@ -726,6 +760,37 @@ function findSolutions() {
   const nums = Array.from(numContainers)
     .map(container => parseNumberInput(container.querySelector(".num").value))
     .map(v => (isNaN(v) ? 0 : v));
+  if (nums.length < 2) {
+    document.getElementById("results").innerHTML = "<h2>กรุณาใส่ตัวเลขอย่างน้อย 2 ตัว</h2>";
+    isCalculating = false;
+    return;
+  }
+  // Branch: Analyze mode uses range instead of single target
+  if(useAnalyzeMode){
+    const minRaw = parseNumberInput(document.getElementById('target-min').value);
+    const maxRaw = parseNumberInput(document.getElementById('target-max').value);
+    const minI = Number.isFinite(minRaw) ? Math.ceil(minRaw) : NaN;
+    const maxI = Number.isFinite(maxRaw) ? Math.floor(maxRaw) : NaN;
+    if (isNaN(minI) || isNaN(maxI)){
+      document.getElementById('results').innerHTML = '<h2>กรุณากรอกช่วงผลลัพธ์ (ต่ำสุด และ สูงสุด)</h2>';
+      isCalculating = false; return;
+    }
+    if (minI > maxI){
+      document.getElementById('results').innerHTML = '<h2>ช่วงไม่ถูกต้อง: ค่าต่ำสุดต้องไม่เกินค่าสูงสุด</h2>';
+      isCalculating = false; return;
+    }
+    if (nums.length < 2) {
+      document.getElementById("results").innerHTML = "<h2>กรุณาใส่ตัวเลขอย่างน้อย 2 ตัว</h2>";
+      isCalculating = false; return;
+    }
+    document.getElementById('results').innerHTML = `
+      <h2>กำลังวิเคราะห์ช่วง ${minI} ถึง ${maxI}...</h2>
+      <button id="cancel-calc-btn" onclick="cancelCalculation = true; cancelAllWorkers();">ยกเลิกการคำนวณ</button>
+    `;
+    findAnalyzeRange(nums, minI, maxI);
+    return;
+  }
+
   const target = parseNumberInput(document.getElementById("target").value);
 
   if (isNaN(target)) {
@@ -747,6 +812,92 @@ function findSolutions() {
   if (useFastMode) findFirstSolutionFast(nums, target);
   else if (useSubsetMode) findSubsetSolutionsParallel(nums, target);
   else findAllSolutionsParallel(nums, target);
+}
+
+// --- Analyze Mode: aggregate integer outputs in [min..max] ---
+function findAnalyzeRange(nums, minTarget, maxTarget){
+  const permutations = permute(nums);
+  const totalPerms = permutations.length;
+  const numWorkers = navigator.hardwareConcurrency || 4;
+  calculationCache.clear(); expressionCache.clear();
+  activeWorkers.forEach(w=>w.terminate()); activeWorkers=[];
+
+  // Global aggregation: value -> Set(expressions)
+  const valueMap = new Map();
+  let nextIndex = 0;
+  let baseBatchSize = 4; const maxBatchSize = 64;
+  let completedPerms = 0; const inProgress = new Map();
+  let lastUIUpdate = 0;
+
+  function adaptiveBatchSize(){ if(baseBatchSize < maxBatchSize) baseBatchSize = Math.min(maxBatchSize, baseBatchSize*2); }
+
+  function mergeChunk(entries){
+    if(!Array.isArray(entries)) return;
+    for(const ent of entries){
+      const v = ent.value; const exprs = ent.expressions || [];
+      if(!valueMap.has(v)) valueMap.set(v, new Set());
+      const set = valueMap.get(v);
+      for(const ex of exprs){ set.add(ex); }
+    }
+  }
+
+  function processedCount(){ let sum=0; inProgress.forEach(v=>{ if(Number.isFinite(v)) sum+=v; }); return completedPerms + sum; }
+  function updateUI(force=false){ const now=performance.now(); if(!force && now-lastUIUpdate<120) return; lastUIUpdate=now; const processed = processedCount(); const pct = totalPerms? Math.round((processed/totalPerms)*100):0; const totals = Array.from(valueMap.values()).reduce((a,s)=>a+s.size,0); document.getElementById('results').innerHTML = `
+      <h2>กำลังวิเคราะห์ช่วง ${minTarget} ถึง ${maxTarget}... ${pct}% (${processed}/${totalPerms})</h2>
+      <p>สะสมสูตรแล้ว: ${totals} แบบ</p>
+      <button id=\"cancel-calc-btn\" onclick=\"cancelCalculation = true; cancelAllWorkers();\">ยกเลิกการคำนวณ</button>
+    `; }
+
+  function assignBatch(worker){ if(nextIndex>=totalPerms) return; const start=nextIndex; const size=Math.min(baseBatchSize, totalPerms-nextIndex); const end=start+size; nextIndex=end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'analyzeRange', permutations, start, end, minTarget, maxTarget, operatorFlags, useIntegerMode: false, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT }); if(nextIndex < totalPerms) adaptiveBatchSize(); }
+
+  for(let w=0; w<numWorkers; w++){
+    const worker = new Worker('worker.js'); activeWorkers.push(worker);
+    worker.onmessage = (e)=>{
+      if(cancelCalculation) return;
+      const d=e.data;
+      if(d.progress){ if(typeof d.processed==='number' && Number.isFinite(d.processed)){ inProgress.set(worker, Math.min(d.processed, (worker._batchEnd - worker._batchStart))); } updateUI(); return; }
+      if(d.analysis){ mergeChunk(d.analysis); }
+      const batchSize = (worker._batchEnd - worker._batchStart);
+      completedPerms += batchSize; inProgress.delete(worker); updateUI(true);
+      if(completedPerms >= totalPerms && inProgress.size===0){
+        // finalize
+        const elapsed = ((performance.now()-calcStartTime)/1000).toFixed(3);
+        renderAnalysisResults(valueMap, minTarget, maxTarget, elapsed);
+        isCalculating=false; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; return;
+      }
+      assignBatch(worker);
+    };
+    worker.onerror = ()=>{ inProgress.delete(worker); completedPerms += (worker._batchEnd - worker._batchStart)||0; updateUI(true); if(completedPerms >= totalPerms && inProgress.size===0){ const elapsed=((performance.now()-calcStartTime)/1000).toFixed(3); renderAnalysisResults(valueMap, minTarget, maxTarget, elapsed); isCalculating=false; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; } else { assignBatch(worker); } };
+    assignBatch(worker);
+  }
+}
+
+function renderAnalysisResults(valueMap, minTarget, maxTarget, elapsed){
+  // build sorted list: by frequency desc, then value asc
+  const rows = Array.from(valueMap.entries()).map(([v,set])=>({ value:v, count:set.size, exprs:Array.from(set) }));
+  rows.sort((a,b)=> (b.count - a.count) || (a.value - b.value));
+  const totalValues = rows.length;
+  const totalExprs = rows.reduce((a,r)=>a+r.count,0);
+  const head = `<h2>สรุปผลช่วง ${minTarget} ถึง ${maxTarget}</h2>${renderElapsed(elapsed)}<div style="font-size:0.9rem; opacity:0.8; margin-bottom:8px;">พบค่า ${totalValues} ค่า • สูตรทั้งหมด ${totalExprs} แบบ</div>`;
+  const list = rows.map((r,idx)=>{
+    const id = `val-${r.value}-${idx}`;
+    const exprItems = r.exprs.map(ex=> `<li>${prettyPrintExpression(ex)}</li>`).join('');
+    return `
+      <div class="analysis-item" style="border:1px solid var(--card-border); border-radius:10px; padding:8px 10px; margin:8px 0; background:var(--bg-secondary)">
+        <div class="analysis-header" data-target="${id}" style="cursor:pointer; display:flex; justify-content:space-between; align-items:center;">
+          <div><strong>${r.value}</strong> <span style="opacity:0.75">— ${r.count} สูตร</span></div>
+          <div style="opacity:0.7;">กดเพื่อดู/ซ่อน</div>
+        </div>
+        <ul id="${id}" class="analysis-body" style="display:none; margin:8px 0 4px 16px;">${exprItems}</ul>
+      </div>`;
+  }).join('');
+  document.getElementById('results').innerHTML = head + list;
+  // wire toggles
+  document.querySelectorAll('.analysis-header').forEach(h=>{
+    h.addEventListener('click', ()=>{
+      const tid = h.getAttribute('data-target'); const el = document.getElementById(tid); if(!el) return; el.style.display = (el.style.display==='none'||!el.style.display) ? 'block' : 'none';
+    });
+  });
 }
 
 // --- Subset Mode (partial usage) ---
@@ -1515,6 +1666,8 @@ function initNavDrag(){
   window.addEventListener('resize', ()=>{ if(!dragging) snapToActive(true); });
 }
 window.addEventListener('load', initNavDrag);
+// Ensure correct target inputs visibility on load
+updateTargetInputVisibility();
     </script>
 </body>
 </html>
