@@ -69,6 +69,11 @@
                 <button id="togglePowBtn" class="toggle-btn" onclick="toggleOperator('^')">เปิดการใช้ ^</button>
                 <button id="toggleConcatBtn" class="toggle-btn" onclick="toggleOperator('||')">เปิดการใช้ concat</button>
                 <button id="toggleSumBtn" class="toggle-btn" onclick="toggleOperator('∑')">เปิดการใช้ ∑</button>
+                <div id="sigma-formula-container" class="sigma-formula-container" style="display:none; margin-top:8px;">
+                  <label for="sigma-formula">สูตร f(i) สำหรับ ∑: </label>
+                  <input type="text" id="sigma-formula" class="sigma-formula-input" value="i" placeholder="เช่น i, i*i, i^2+1" onchange="updateSigmaFormula()" />
+                  <div style="font-size:0.8rem; opacity:0.75; margin-top:4px;">ใช้ตัวแปร i, ตัวเลข, วงเล็บ และเครื่องหมาย + - * / % ^ ได้</div>
+                </div>
                 <br>
                 <button id="toggleSqrtBtn" class="toggle-btn" onclick="toggleOperator('√')">เปิดการใช้ √</button>
                 <div id="sqrt-depth-container" class="sqrt-depth-container">
@@ -158,6 +163,7 @@ let MAX_SQRT_DEPTH = 1;
 let MAX_FACT_DEPTH = 1;
 let MAX_LOG_DEPTH = 1;
 let MAX_LN_DEPTH = 1;
+let SIGMA_FORMULA = 'i'; // NEW: summand formula for sigma
 const MAX_FACTORIAL_INPUT = 12;
 const MAX_RESULTS = 100;
 const CHUNK_SIZE = 20;
@@ -201,6 +207,7 @@ function toggleOperator(op) {
     if (op === '!') document.getElementById("fact-depth-container").style.display = "block";
   if (op === 'log') document.getElementById('log-depth-container').style.display = 'block';
   if (op === 'ln') document.getElementById('ln-depth-container').style.display = 'block';
+  if (op === '∑') { const el = document.getElementById('sigma-formula-container'); if(el) el.style.display='block'; }
   } else {
     btn.textContent = `เปิดการใช้ ${disp}`;
     btn.classList.remove('active');
@@ -208,6 +215,7 @@ function toggleOperator(op) {
     if (op === '!') document.getElementById("fact-depth-container").style.display = "none";
   if (op === 'log') document.getElementById('log-depth-container').style.display = 'none';
   if (op === 'ln') document.getElementById('ln-depth-container').style.display = 'none';
+  if (op === '∑') { const el = document.getElementById('sigma-formula-container'); if(el) el.style.display='none'; }
   }
 }
 
@@ -427,6 +435,18 @@ function updateMaxLnDepth(){
   const input = document.getElementById('ln-depth');
   const v = parseInt(input.value);
   if(!isNaN(v) && v>=1) MAX_LN_DEPTH = v; else input.value = MAX_LN_DEPTH;
+}
+
+function updateSigmaFormula(){
+  const input = document.getElementById('sigma-formula');
+  if(!input) return;
+  let s = (input.value || '').trim();
+  if(!s) s = 'i';
+  // Basic sanitation: limit length and allowed chars
+  if(s.length > 64) s = s.slice(0,64);
+  // Keep as-is; worker will parse/validate
+  SIGMA_FORMULA = s;
+  input.value = s;
 }
 
 function addNumber() {
@@ -848,11 +868,11 @@ function findAnalyzeRange(nums, minTarget, maxTarget){
       <button id=\"cancel-calc-btn\" onclick=\"cancelCalculation = true; cancelAllWorkers();\">ยกเลิกการคำนวณ</button>
     `; }
 
-  function assignBatch(worker){ if(nextIndex>=totalPerms) return; const start=nextIndex; const size=Math.min(baseBatchSize, totalPerms-nextIndex); const end=start+size; nextIndex=end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'analyzeRange', permutations, start, end, minTarget, maxTarget, operatorFlags, useIntegerMode: false, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT }); if(nextIndex < totalPerms) adaptiveBatchSize(); }
+  function assignBatch(worker){ if(nextIndex>=totalPerms) return; const start=nextIndex; const size=Math.min(baseBatchSize, totalPerms-nextIndex); const end=start+size; nextIndex=end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'analyzeRange', permutations, start, end, minTarget, maxTarget, operatorFlags, useIntegerMode: false, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, sigmaFormula: SIGMA_FORMULA }); if(nextIndex < totalPerms) adaptiveBatchSize(); }
 
   for(let w=0; w<numWorkers; w++){
     const worker = new Worker('worker.js'); activeWorkers.push(worker);
-    worker.onmessage = (e)=>{
+  worker.onmessage = (e)=>{
       if(cancelCalculation) return;
       const d=e.data;
       if(d.progress){ if(typeof d.processed==='number' && Number.isFinite(d.processed)){ inProgress.set(worker, Math.min(d.processed, (worker._batchEnd - worker._batchStart))); } updateUI(); return; }
@@ -868,7 +888,7 @@ function findAnalyzeRange(nums, minTarget, maxTarget){
       assignBatch(worker);
     };
     worker.onerror = ()=>{ inProgress.delete(worker); completedPerms += (worker._batchEnd - worker._batchStart)||0; updateUI(true); if(completedPerms >= totalPerms && inProgress.size===0){ const elapsed=((performance.now()-calcStartTime)/1000).toFixed(3); renderAnalysisResults(valueMap, minTarget, maxTarget, elapsed); isCalculating=false; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; } else { assignBatch(worker); } };
-    assignBatch(worker);
+  assignBatch(worker);
   }
 }
 
@@ -926,7 +946,7 @@ function findSubsetSolutionsParallel(nums, target){
   function ui(force=false){ const now=performance.now(); if(!force && now-lastUI<120) return; lastUI=now; const pct=Math.round((completed/total)*100); let cTxt='ยังไม่พบ'; if(closest){ cTxt = (closest.diff<=EXACT_EPS? `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ตรงเป๊ะ)` : `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ห่าง ${formatNumber(closest.diff)})`); }
     document.getElementById('results').innerHTML=`<h2>โหมดย่อย: ${pct}% (${completed}/${total})</h2><p>ดีที่สุด: ${cTxt}</p><button id=\"cancel-calc-btn\" onclick=\"cancelCalculation=true; cancelAllWorkers();\">ยกเลิก</button>`; }
   function finish(){ const elapsed=((performance.now()-calcStartTime)/1000).toFixed(3); if(results.length){ displayResults(results, elapsed); } else if(closest){ const head = closest.diff<=EXACT_EPS ? 'พบคำตอบตรงเป๊ะ (ชุดย่อย)' : 'คำตอบใกล้สุด (ชุดย่อย)'; document.getElementById('results').innerHTML=`<h2>${head}</h2>${renderElapsed(elapsed)}<ul><li>${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)}${closest.diff<=EXACT_EPS?'':' (ห่าง '+formatNumber(closest.diff)+')'}</li></ul>`; } else { document.getElementById('results').innerHTML=`<h2>ไม่พบคำตอบ</h2>${renderElapsed(elapsed)}`; } isCalculating=false; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; }
-  let next=0; function assign(worker){ if(next>=total) return; const start=next; const end=start+1; next=end; inProgress.set(worker,0); worker._start=start; worker._end=end; worker.postMessage({ type:'findAllSubsetsRange', permutations: subsets, start, end, target, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity }); }
+  let next=0; function assign(worker){ if(next>=total) return; const start=next; const end=start+1; next=end; inProgress.set(worker,0); worker._start=start; worker._end=end; worker.postMessage({ type:'findAllSubsetsRange', permutations: subsets, start, end, target, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity, sigmaFormula: SIGMA_FORMULA }); }
   for(let w=0; w<numWorkers; w++){ const worker=new Worker('worker.js'); activeWorkers.push(worker); worker.onmessage=e=>{ if(cancelCalculation) return; const d=e.data; if(d.progress){ if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } ui(); return; } if(d.results){ for(const r of d.results){ results.push(r); } } if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } completed += (worker._end - worker._start); inProgress.delete(worker); ui(true); if(completed>=total && inProgress.size===0){ finish(); return; } assign(worker); }; worker.onerror=()=>{ completed += (worker._end - worker._start)||0; inProgress.delete(worker); if(completed>=total && inProgress.size===0) finish(); else assign(worker); }; assign(worker); }
 }
 
@@ -1022,6 +1042,7 @@ function findFirstSolutionFast(nums, target) {
       MAX_LOG_DEPTH,
       MAX_LN_DEPTH,
       MAX_FACTORIAL_INPUT,
+  sigmaFormula: SIGMA_FORMULA,
       speedAccuracy: fastAccuracy, // keep heuristic scaling
       timeBudgetMs, // NEW explicit cap
       allowPartial: useSubsetMode // allow partial expressions only when subset mode active
@@ -1168,7 +1189,7 @@ function findAllSolutionsParallel(nums, target) {
 
   function assignBatch(worker){
     if (cancelCalculation) return; if (nextIndex >= totalPerms){ return; }
-    const start = nextIndex; const size = Math.min(baseBatchSize, totalPerms - nextIndex); const end = start + size; nextIndex = end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'findAllRange', permutations, start, end, target, nums, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity });
+  const start = nextIndex; const size = Math.min(baseBatchSize, totalPerms - nextIndex); const end = start + size; nextIndex = end; inProgress.set(worker,0); worker._batchStart=start; worker._batchEnd=end; worker.postMessage({ type:'findAllRange', permutations, start, end, target, nums, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity, sigmaFormula: SIGMA_FORMULA });
     if (nextIndex < totalPerms) adaptiveBatchSize();
   }
 
@@ -1184,7 +1205,7 @@ function findAllSolutionsParallel(nums, target) {
         updateUI();
         return;
       }
-      if (data.results){
+  if (data.results){
         data.results.forEach(res=>{ if(!expressionSet.has(res.expression)){ expressionSet.add(res.expression); results.push(res);} });
       }
       if (data.closest && (!closestResult || data.closest.diff < smallestDiff)) { smallestDiff=data.closest.diff; closestResult=data.closest; window.closestResultOnCancel=closestResult; }

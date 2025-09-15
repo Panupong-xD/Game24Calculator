@@ -15,6 +15,121 @@ let externalTimeBudgetMs = null; // explicit hard cap from UI (slider/5 s)
 const EXACT_EPS = 1e-12;
 let lastTimedOut = false; // indicates dfs fast phase stopped by time budget
 
+// Sigma formula support
+let sigmaFormula = 'i';
+let sigmaRPN = null; // cached compiled tokens
+
+// Sigma-specific magnitude caps to keep Σ usable with power/factorial
+let SIGMA_HARD_CAP = 1e8;       // absolute cap for Σ terms and running sum
+let SIGMA_REL_MULT = 1000;      // relative cap = SIGMA_REL_MULT * |target|
+let CURRENT_TARGET_MAG = 1;     // set per message
+function sigmaExceedsCap(val){
+  if(!Number.isFinite(val)) return true;
+  const abs = Math.abs(val);
+  if(abs > SIGMA_HARD_CAP) return true;
+  const rel = Math.max(1, CURRENT_TARGET_MAG) * SIGMA_REL_MULT;
+  if(abs > rel) return true;
+  return false;
+}
+function compileSigmaFormula(formula){
+  try {
+    if(!formula || typeof formula !== 'string') formula = 'i';
+    const s = formula.trim();
+    if(s === 'i') { sigmaRPN = ['i']; return; }
+    // Tokenize: numbers, i, ops + - * / % ^, parentheses
+    const tokens = [];
+    let i = 0;
+    while(i < s.length){
+      const ch = s[i];
+      if(/\s/.test(ch)){ i++; continue; }
+      if(ch === 'i'){ tokens.push('i'); i++; continue; }
+      if(/[0-9.]/.test(ch)){
+        let j=i; while(j<s.length && /[0-9.]/.test(s[j])) j++;
+        const num = s.slice(i,j);
+        if(num.split('.').length>2) { throw new Error('invalid number'); }
+        tokens.push(parseFloat(num)); i=j; continue;
+      }
+      if('+-*/%^()'.includes(ch)){
+        tokens.push(ch); i++; continue;
+      }
+      throw new Error('invalid character');
+    }
+    // Shunting-yard to RPN; handle unary minus by inserting 0 before leading '-' or after '('
+    const output = [];
+    const stack = [];
+    const prec = {'^':4, '*':3,'/':3,'%':3,'+':2,'-':2};
+    const rightAssoc = {'^':true};
+    function isOp(t){ return typeof t==='string' && '+-*/%^'.includes(t); }
+    for(let k=0;k<tokens.length;k++){
+      let t = tokens[k];
+      if(t==='i' || typeof t==='number'){ output.push(t); continue; }
+      if(t==='('){ stack.push(t); continue; }
+      if(t===')'){
+        while(stack.length && stack[stack.length-1] !== '('){ output.push(stack.pop()); }
+        if(stack.length===0) throw new Error('mismatched paren');
+        stack.pop(); continue;
+      }
+      if(isOp(t)){
+        // unary minus handling: if at start or after '(', treat as 0 - next
+        const prev = tokens[k-1];
+        if(t==='-' && (k===0 || prev==='(' || isOp(prev))){
+          // inject 0
+          output.push(0);
+        }
+        while(stack.length){
+          const top = stack[stack.length-1];
+          if(isOp(top) && ((rightAssoc[t] ? prec[t] < prec[top] : prec[t] <= prec[top]))){ output.push(stack.pop()); }
+          else break;
+        }
+        stack.push(t); continue;
+      }
+      throw new Error('unexpected token');
+    }
+    while(stack.length){ const t=stack.pop(); if(t==='('||t===')') throw new Error('mismatched paren'); output.push(t); }
+    sigmaRPN = output;
+  } catch{ sigmaRPN = ['i']; }
+}
+function evalSigmaAt(iVal){
+  if(!sigmaRPN) return iVal;
+  if(sigmaRPN.length===1 && sigmaRPN[0]==='i') return iVal;
+  const st=[];
+  for(const t of sigmaRPN){
+    if(t==='i'){ st.push(iVal); }
+    else if(typeof t==='number'){ st.push(t); }
+    else if(typeof t==='string'){
+      if(t==='+'){ const b=st.pop(), a=st.pop(); st.push(a+b); }
+      else if(t==='-'){ const b=st.pop(), a=st.pop(); st.push(a-b); }
+      else if(t==='*'){ const b=st.pop(), a=st.pop(); st.push(a*b); }
+      else if(t==='/'){ const b=st.pop(), a=st.pop(); if(Math.abs(b)<1e-12) return NaN; st.push(a/b); }
+      else if(t==='%'){ const b=st.pop(), a=st.pop(); if(Math.abs(b)<1e-12) return NaN; st.push(a - b*Math.floor(a/b)); }
+      else if(t==='^'){ const b=st.pop(), a=st.pop(); if(a===0 && b<=0) return NaN; st.push(Math.pow(a,b)); }
+      else return NaN;
+    } else return NaN;
+  if(!Number.isFinite(st[st.length-1])) return NaN;
+  if(sigmaExceedsCap(st[st.length-1])) return NaN;
+  }
+  if(st.length!==1) return NaN;
+  return st[0];
+}
+function sumSigma(a,b){
+  if(!Number.isInteger(a) || !Number.isInteger(b)) return NaN;
+  if(a>b) return NaN;
+  // Fast path: default 'i'
+  if(sigmaRPN && sigmaRPN.length===1 && sigmaRPN[0]==='i'){
+  const n = b - a + 1; const res = (a + b) * n / 2; return sigmaExceedsCap(res) ? NaN : res;
+  }
+  let acc = 0;
+  for(let i=a;i<=b;i++){
+    const v = evalSigmaAt(i);
+  if(!Number.isFinite(v)) return NaN;
+  if(sigmaExceedsCap(v)) return NaN;
+    acc += v;
+  if(!Number.isFinite(acc)) return NaN;
+  if(sigmaExceedsCap(acc)) return NaN;
+  }
+  return acc;
+}
+
 const factorialCache = new Map();
 const calculationCache = new Map();
 const expressionCache = new Map();
@@ -32,7 +147,7 @@ function postProgress(closest){
 
 function factorial(n){ if(n<0||n>MAX_FACTORIAL_INPUT||!Number.isInteger(n)) return NaN; if(n===0||n===1) return 1; if(factorialCache.has(n)) return factorialCache.get(n); let r; if(self.wasmMath && self.wasmMath.isReady){ r=self.wasmMath.factorial(n);} else { r=1; for(let i=2;i<=n;i++) r*=i; } factorialCache.set(n,r); return r; }
 
-function evaluateAST(node){ if(node.type==='num') return node.value; if(node.value!==undefined) return node.value; let leftVal=node.left?evaluateAST(node.left):null; let rightVal=evaluateAST(node.right); const ck=`${node.operator}|${leftVal}|${rightVal}`; if(calculationCache.has(ck)) return calculationCache.get(ck); let result; if(self.wasmMath && self.wasmMath.isReady){ switch(node.operator){ case '+': result=operatorFlags['+']? self.wasmMath.add(leftVal,rightVal):NaN; break; case '-': result=operatorFlags['-']? self.wasmMath.sub(leftVal,rightVal):NaN; break; case '*': result=operatorFlags['*']? self.wasmMath.mul(leftVal,rightVal):NaN; break; case '/': result=operatorFlags['/'] && rightVal!==0? self.wasmMath.div(leftVal,rightVal):NaN; break; case '%': if(!operatorFlags['%']|| rightVal===0) return NaN; result= leftVal - rightVal*Math.floor(leftVal/rightVal); break; case '^': if(!operatorFlags['^']) return NaN; result = (leftVal===0 && rightVal<=0)? (rightVal===0?1:NaN) : self.wasmMath.pow(leftVal,rightVal); break; case '√': result= operatorFlags['√'] && rightVal>=0 ? self.wasmMath.sqrt(rightVal):NaN; break; case '!': result= operatorFlags['!'] && rightVal<=MAX_FACTORIAL_INPUT && rightVal>=0 && Number.isInteger(rightVal)? self.wasmMath.factorial(rightVal): NaN; break; case 'log': result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN; break; case 'ln': result = operatorFlags['ln'] && rightVal>0 ? Math.log(rightVal) : NaN; break; case '||': { if(!operatorFlags['||']) return NaN; if(!Number.isInteger(leftVal)||!Number.isInteger(rightVal)|| leftVal<0 || rightVal<0) return NaN; result = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal))); break; } case '∑': { if(!operatorFlags['∑']) return NaN; if(!Number.isInteger(leftVal)||!Number.isInteger(rightVal)|| leftVal>rightVal) return NaN; const n= rightVal-leftVal+1; result = (leftVal+rightVal)*n/2; break; } } } else { switch(node.operator){ case '+': result=operatorFlags['+']? leftVal+rightVal:NaN; break; case '-': result=operatorFlags['-']? leftVal-rightVal:NaN; break; case '*': result=operatorFlags['*']? leftVal*rightVal:NaN; break; case '/': result=operatorFlags['/'] && rightVal!==0? leftVal/rightVal:NaN; break; case '%': if(!operatorFlags['%']|| rightVal===0) return NaN; result= leftVal - rightVal*Math.floor(leftVal/rightVal); break; case '^': if(!operatorFlags['^']) return NaN; result = (leftVal===0 && rightVal<=0)? (rightVal===0?1:NaN) : Math.pow(leftVal,rightVal); break; case '√': result= operatorFlags['√'] && rightVal>=0 ? Math.sqrt(rightVal):NaN; break; case '!': result= operatorFlags['!'] && rightVal<=MAX_FACTORIAL_INPUT && rightVal>=0 && Number.isInteger(rightVal)? factorial(rightVal): NaN; break; case 'log': result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN; break; case 'ln': result = operatorFlags['ln'] && rightVal>0 ? Math.log(rightVal) : NaN; break; case '||': { if(!operatorFlags['||']) return NaN; if(!Number.isInteger(leftVal)||!Number.isInteger(rightVal)|| leftVal<0 || rightVal<0) return NaN; result = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal))); break; } case '∑': { if(!operatorFlags['∑']) return NaN; if(!Number.isInteger(leftVal)||!Number.isInteger(rightVal)|| leftVal>rightVal) return NaN; const n= rightVal-leftVal+1; result = (leftVal+rightVal)*n/2; break; } } } if(!isNaN(result)){ if(calculationCache.size>1000000) calculationCache.clear(); calculationCache.set(ck,result); node.value=result; } return result; }
+function evaluateAST(node){ if(node.type==='num') return node.value; if(node.value!==undefined) return node.value; let leftVal=node.left?evaluateAST(node.left):null; let rightVal=evaluateAST(node.right); const ck=`${node.operator}|${leftVal}|${rightVal}`; if(calculationCache.has(ck)) return calculationCache.get(ck); let result; if(self.wasmMath && self.wasmMath.isReady){ switch(node.operator){ case '+': result=operatorFlags['+']? self.wasmMath.add(leftVal,rightVal):NaN; break; case '-': result=operatorFlags['-']? self.wasmMath.sub(leftVal,rightVal):NaN; break; case '*': result=operatorFlags['*']? self.wasmMath.mul(leftVal,rightVal):NaN; break; case '/': result=operatorFlags['/'] && rightVal!==0? self.wasmMath.div(leftVal,rightVal):NaN; break; case '%': if(!operatorFlags['%']|| rightVal===0) return NaN; result= leftVal - rightVal*Math.floor(leftVal/rightVal); break; case '^': if(!operatorFlags['^']) return NaN; result = (leftVal===0 && rightVal<=0)? (rightVal===0?1:NaN) : self.wasmMath.pow(leftVal,rightVal); break; case '√': result= operatorFlags['√'] && rightVal>=0 ? self.wasmMath.sqrt(rightVal):NaN; break; case '!': result= operatorFlags['!'] && rightVal<=MAX_FACTORIAL_INPUT && rightVal>=0 && Number.isInteger(rightVal)? self.wasmMath.factorial(rightVal): NaN; break; case 'log': result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN; break; case 'ln': result = operatorFlags['ln'] && rightVal>0 ? Math.log(rightVal) : NaN; break; case '||': { if(!operatorFlags['||']) return NaN; if(!Number.isInteger(leftVal)||!Number.isInteger(rightVal)|| leftVal<0 || rightVal<0) return NaN; result = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal))); break; } case '∑': { if(!operatorFlags['∑']) return NaN; result = sumSigma(leftVal, rightVal); break; } } } else { switch(node.operator){ case '+': result=operatorFlags['+']? leftVal+rightVal:NaN; break; case '-': result=operatorFlags['-']? leftVal-rightVal:NaN; break; case '*': result=operatorFlags['*']? leftVal*rightVal:NaN; break; case '/': result=operatorFlags['/'] && rightVal!==0? leftVal/rightVal:NaN; break; case '%': if(!operatorFlags['%']|| rightVal===0) return NaN; result= leftVal - rightVal*Math.floor(leftVal/rightVal); break; case '^': if(!operatorFlags['^']) return NaN; result = (leftVal===0 && rightVal<=0)? (rightVal===0?1:NaN) : Math.pow(leftVal,rightVal); break; case '√': result= operatorFlags['√'] && rightVal>=0 ? Math.sqrt(rightVal):NaN; break; case '!': result= operatorFlags['!'] && rightVal<=MAX_FACTORIAL_INPUT && rightVal>=0 && Number.isInteger(rightVal)? factorial(rightVal): NaN; break; case 'log': result = operatorFlags['log'] && rightVal>0 ? Math.log10(rightVal) : NaN; break; case 'ln': result = operatorFlags['ln'] && rightVal>0 ? Math.log(rightVal) : NaN; break; case '||': { if(!operatorFlags['||']) return NaN; if(!Number.isInteger(leftVal)||!Number.isInteger(rightVal)|| leftVal<0 || rightVal<0) return NaN; result = parseFloat(String(Math.trunc(leftVal)) + String(Math.trunc(rightVal))); break; } case '∑': { if(!operatorFlags['∑']) return NaN; result = sumSigma(leftVal, rightVal); break; } } } if(!isNaN(result)){ if(calculationCache.size>1000000) calculationCache.clear(); calculationCache.set(ck,result); node.value=result; } return result; }
 
 function isIntegerResult(r){ return Number.isInteger(r) || Math.abs(r - Math.round(r)) < 0.0001; }
 function serializeAST(node){ if(node.type==='num') return node.value.toString(); if(node.operator==='√') return `√(${serializeAST(node.right)})`; if(node.operator==='!') return `(${serializeAST(node.right)})!`; if(node.operator==='log') return `log(${serializeAST(node.right)})`; if(node.operator==='ln') return `ln(${serializeAST(node.right)})`; return `(${node.left?serializeAST(node.left):''} ${node.operator} ${serializeAST(node.right)})`; }
@@ -76,7 +191,7 @@ function generateAllGroupings(nums,target){
                 case '%': resultVal = rightVal===0? NaN : leftVal - rightVal * Math.floor(leftVal/rightVal); break;
                 case '^': resultVal = (leftVal===0 && rightVal<=0)? NaN : Math.pow(leftVal,rightVal); break;
                 case '||': resultVal = (Number.isInteger(leftVal)&&Number.isInteger(rightVal)&& leftVal>=0 && rightVal>=0)? parseFloat(String(Math.trunc(leftVal))+String(Math.trunc(rightVal))) : NaN; break;
-                case '∑': resultVal = (Number.isInteger(leftVal)&&Number.isInteger(rightVal)&& leftVal<=rightVal)? ((leftVal+rightVal)*(rightVal-leftVal+1)/2) : NaN; break;
+                case '∑': resultVal = sumSigma(leftVal, rightVal); break;
               }
               if(!isFinite(resultVal) || isNaN(resultVal)) continue;
               if(useIntegerMode && !isIntegerResult(resultVal)) continue;
@@ -147,7 +262,7 @@ function dfsFindClosest(nums,target,closest){
     const n=curNums.length; const pairMeta=[]; for(let i=0;i<n-1;i++){ for(let j=i+1;j<n;j++){ const a=curNums[i], b=curNums[j]; if(magnitudeLimit!==Infinity && Math.abs(a)>magnitudeLimit && Math.abs(b)>magnitudeLimit) continue; let bestLocal=Infinity; if(ENABLE['*']) bestLocal=Math.min(bestLocal, Math.abs(a*b-target)); if(ENABLE['+']) bestLocal=Math.min(bestLocal, Math.abs(a+b-target)); if(ENABLE['-']){ bestLocal=Math.min(bestLocal, Math.abs(a-b-target)); bestLocal=Math.min(bestLocal, Math.abs(b-a-target)); } if(ENABLE['/']){ if(Math.abs(b)>1e-12) bestLocal=Math.min(bestLocal, Math.abs(a/b-target)); if(Math.abs(a)>1e-12) bestLocal=Math.min(bestLocal, Math.abs(b/a-target)); } if(ENABLE['%']){ if(Math.abs(b)>1e-12) bestLocal=Math.min(bestLocal, Math.abs((a - b*Math.floor(a/b))-target)); if(Math.abs(a)>1e-12) bestLocal=Math.min(bestLocal, Math.abs((b - a*Math.floor(b/a))-target)); } if(allowPower){ if(!(a===0 && b<=0)) bestLocal=Math.min(bestLocal, Math.abs(Math.pow(a,b)-target)); if(!(b===0 && a<=0)) bestLocal=Math.min(bestLocal, Math.abs(Math.pow(b,a)-target)); } pairMeta.push({i,j,score:bestLocal}); } }
     pairMeta.sort((x,y)=>x.score-y.score);
 
-    for(const {i,j} of pairMeta){ if(timeExceeded()){ lastTimedOut=true; return true; } const a=curNums[i], b=curNums[j]; const ea=curExpr[i], eb=curExpr[j]; const restNums=[]; const restExpr=[]; for(let t=0;t<n;t++){ if(t!==i && t!==j){ restNums.push(curNums[t]); restExpr.push(curExpr[t]); }} const candidates=[]; function pushCandidate(op,la,rb,EA,EB){ let val; const ck=op+'|'+la+'|'+rb; if(opResultCache.has(ck)){ val=opResultCache.get(ck);} else { switch(op){ case '+': val=la+rb; break; case '-': val=la-rb; break; case '*': val=la*rb; break; case '/': val= Math.abs(rb)<1e-12? NaN: la/rb; break; case '%': val= Math.abs(rb)<1e-12? NaN: la - rb*Math.floor(la/rb); break; case '^': val = (la===0 && rb<=0)? NaN: Math.pow(la,rb); break; case '||': val = (Number.isInteger(la)&&Number.isInteger(rb)&& la>=0 && rb>=0)? parseFloat(String(Math.trunc(la))+String(Math.trunc(rb))) : NaN; break; case '∑': val = (Number.isInteger(la)&&Number.isInteger(rb)&& la<=rb)? ((la+rb)*(rb-la+1)/2) : NaN; break; default: val=NaN; } opResultCache.set(ck,val);} if(isNaN(val)||!isFinite(val)) return; if(useIntegerMode && !isIntegerResult(val)) return; if(magnitudeLimit!==Infinity && Math.abs(val) > magnitudeLimit * (2 + speedAccuracy*4)) return; const diff=Math.abs(val-target); candidates.push({op,val,diff,left:EA,right:EB}); }
+  for(const {i,j} of pairMeta){ if(timeExceeded()){ lastTimedOut=true; return true; } const a=curNums[i], b=curNums[j]; const ea=curExpr[i], eb=curExpr[j]; const restNums=[]; const restExpr=[]; for(let t=0;t<n;t++){ if(t!==i && t!==j){ restNums.push(curNums[t]); restExpr.push(curExpr[t]); }} const candidates=[]; function pushCandidate(op,la,rb,EA,EB){ let val; const ck=op+'|'+la+'|'+rb; if(opResultCache.has(ck)){ val=opResultCache.get(ck);} else { switch(op){ case '+': val=la+rb; break; case '-': val=la-rb; break; case '*': val=la*rb; break; case '/': val= Math.abs(rb)<1e-12? NaN: la/rb; break; case '%': val= Math.abs(rb)<1e-12? NaN: la - rb*Math.floor(la/rb); break; case '^': val = (la===0 && rb<=0)? NaN: Math.pow(la,rb); break; case '||': val = (Number.isInteger(la)&&Number.isInteger(rb)&& la>=0 && rb>=0)? parseFloat(String(Math.trunc(la))+String(Math.trunc(rb))) : NaN; break; case '∑': val = sumSigma(la, rb); break; default: val=NaN; } opResultCache.set(ck,val);} if(isNaN(val)||!isFinite(val)) return; if(useIntegerMode && !isIntegerResult(val)) return; if(magnitudeLimit!==Infinity && Math.abs(val) > magnitudeLimit * (2 + speedAccuracy*4)) return; const diff=Math.abs(val-target); candidates.push({op,val,diff,left:EA,right:EB}); }
       if(ENABLE['+']) pushCandidate('+', a<=b?a:b, a<=b?b:a, a<=b?ea:eb, a<=b?eb:ea);
       if(ENABLE['-']){ pushCandidate('-',a,b,ea,eb); pushCandidate('-',b,a,eb,ea); }
       if(ENABLE['*']) pushCandidate('*', a<=b?a:b, a<=b?b:a, a<=b?ea:eb, a<=b?eb:ea);
@@ -155,7 +270,7 @@ function dfsFindClosest(nums,target,closest){
       if(ENABLE['%']){ pushCandidate('%',a,b,ea,eb); pushCandidate('%',b,a,eb,ea); }
       if(allowPower && ENABLE['^']){ pushCandidate('^',a,b,ea,eb); pushCandidate('^',b,a,eb,ea); }
       if(ENABLE['||']){ pushCandidate('||',a,b,ea,eb); pushCandidate('||',b,a,eb,ea); }
-      if(ENABLE['∑']){ pushCandidate('∑',a,b,ea,eb); pushCandidate('∑',b,a,eb,ea); }
+  if(ENABLE['∑']){ pushCandidate('∑',a,b,ea,eb); pushCandidate('∑',b,a,eb,ea); }
       if(candidates.length===0) continue;
       candidates.sort((x,y)=>x.diff-y.diff);
       const BEAM = (n>=5)? Math.min(candidates.length, currentBeam) : candidates.length;
@@ -194,7 +309,7 @@ function fallbackExactSearch(nums,target){ const ENABLE={ '+':!!operatorFlags['+
       if(ENABLE['%']){ if(Math.abs(b)>1e-12 && push(a - b*Math.floor(a/b), {type:'op',operator:'%',left:ea,right:eb,value:a - b*Math.floor(a/b)})) return true; if(Math.abs(a)>1e-12 && push(b - a*Math.floor(b/a), {type:'op',operator:'%',left:eb,right:ea,value:b - a*Math.floor(b/a)})) return true; }
       if(ENABLE['^']){ if(!(a===0 && b<=0) && push(Math.pow(a,b), {type:'op',operator:'^',left:ea,right:eb,value:Math.pow(a,b)})) return true; if(!(b===0 && a<=0) && push(Math.pow(b,a), {type:'op',operator:'^',left:eb,right:ea,value:Math.pow(b,a)})) return true; }
       if(ENABLE['||']){ if(Number.isInteger(a) && Number.isInteger(b) && a>=0 && b>=0) push(parseFloat(String(Math.trunc(a))+String(Math.trunc(b))), {type:'op',operator:'||',left:ea,right:eb,value:parseFloat(String(Math.trunc(a))+String(Math.trunc(b)))}); if(Number.isInteger(b) && Number.isInteger(a) && b>=0 && a>=0) push(parseFloat(String(Math.trunc(b))+String(Math.trunc(a))), {type:'op',operator:'||',left:eb,right:ea,value:parseFloat(String(Math.trunc(b))+String(Math.trunc(a)))}); }
-      if(ENABLE['∑']){ if(Number.isInteger(a) && Number.isInteger(b) && a<=b) push(((a+b)*(b-a+1)/2), {type:'op',operator:'∑',left:ea,right:eb,value:((a+b)*(b-a+1)/2)}); if(Number.isInteger(b) && Number.isInteger(a) && b<=a) push(((b+a)*(a-b+1)/2), {type:'op',operator:'∑',left:eb,right:ea,value:((b+a)*(a-b+1)/2)}); }
+  if(ENABLE['∑']){ const sab = sumSigma(a,b); if(Number.isFinite(sab)) push(sab, {type:'op',operator:'∑',left:ea,right:eb,value:sab}); const sba = sumSigma(b,a); if(Number.isFinite(sba)) push(sba, {type:'op',operator:'∑',left:eb,right:ea,value:sba}); }
     } }
     return false; }
   dfs(nums.slice(), nums.map(n=>({type:'num',value:n})));
@@ -280,7 +395,7 @@ function fast_runAnytime(numsInput, target, allowPartial=false){
         const restNums=[]; const restExpr=[]; for(let t=0;t<nL;t++){ if(t!==i && t!==j){ restNums.push(curNums[t]); restExpr.push(curExpr[t]); }}
         const candOps=['+','-','*','/']; if(ENABLE['%']) candOps.push('%'); if(allowPower) candOps.push('^'); if(ENABLE['||']) candOps.push('||'); if(ENABLE['∑']) candOps.push('∑');
         const candidates=[];
-        function add(op,x,y,ex,ey){ let val; switch(op){ case '+': val=x+y; break; case '-': val=x-y; break; case '*': val=x*y; break; case '/': val= Math.abs(y)<1e-12? NaN: x/y; break; case '%': val= Math.abs(y)<1e-12? NaN: x - y*Math.floor(x/y); break; case '^': val = (x===0 && y<=0)? NaN: Math.pow(x,y); break; case '||': val = (Number.isInteger(x)&&Number.isInteger(y)&& x>=0 && y>=0)? parseFloat(String(Math.trunc(x))+String(Math.trunc(y))) : NaN; break; case '∑': val = (Number.isInteger(x)&&Number.isInteger(y)&& x<=y)? ((x+y)*(y-x+1)/2) : NaN; break; }
+  function add(op,x,y,ex,ey){ let val; switch(op){ case '+': val=x+y; break; case '-': val=x-y; break; case '*': val=x*y; break; case '/': val= Math.abs(y)<1e-12? NaN: x/y; break; case '%': val= Math.abs(y)<1e-12? NaN: x - y*Math.floor(x/y); break; case '^': val = (x===0 && y<=0)? NaN: Math.pow(x,y); break; case '||': val = (Number.isInteger(x)&&Number.isInteger(y)&& x>=0 && y>=0)? parseFloat(String(Math.trunc(x))+String(Math.trunc(y))) : NaN; break; case '∑': val = sumSigma(x,y); break; }
           if(!isFinite(val)||isNaN(val)) return; if(useIntegerMode && !isIntegerResult(val)) return; const diff=Math.abs(val-target); candidates.push({op,val,diff,left:ex,right:ey}); }
         add('+',a,b,ea,eb); add('-',a,b,ea,eb); add('-',b,a,eb,ea); add('*',a,b,ea,eb); add('/',a,b,ea,eb); add('/',b,a,eb,ea);
         if(ENABLE['%']){ add('%',a,b,ea,eb); add('%',b,a,eb,ea);} if(allowPower){ add('^',a,b,ea,eb); add('^',b,a,eb,ea);} if(ENABLE['||']){ add('||',a,b,ea,eb); add('||',b,a,eb,ea);} if(ENABLE['∑']){ add('∑',a,b,ea,eb); add('∑',b,a,eb,ea);} candidates.sort((x,y)=>x.diff-y.diff);
@@ -353,7 +468,7 @@ function fast_runAnytime(numsInput, target, allowPartial=false){
           }
           const opLimit = 10; // cap per pair after filtering
           const opResults=[];
-          for(const c of candOps){ if(opResults.length>=opLimit) break; let val; switch(c.op){ case '+': val=c.x+c.y; break; case '-': val=c.x-c.y; break; case '*': val=c.x*c.y; break; case '/': val=Math.abs(c.y)<1e-12? NaN: c.x/c.y; break; case '%': val=Math.abs(c.y)<1e-12? NaN: c.x - c.y*Math.floor(c.x/c.y); break; case '^': val=(c.x===0 && c.y<=0)? NaN: Math.pow(c.x,c.y); break; case '||': val=(Number.isInteger(c.x)&&Number.isInteger(c.y)&& c.x>=0 && c.y>=0)? parseFloat(String(Math.trunc(c.x))+String(Math.trunc(c.y))):NaN; break; case '∑': val=(Number.isInteger(c.x)&&Number.isInteger(c.y)&& c.x<=c.y)? ((c.x+c.y)*(c.y-c.x+1)/2):NaN; break; }
+          for(const c of candOps){ if(opResults.length>=opLimit) break; let val; switch(c.op){ case '+': val=c.x+c.y; break; case '-': val=c.x-c.y; break; case '*': val=c.x*c.y; break; case '/': val=Math.abs(c.y)<1e-12? NaN: c.x/c.y; break; case '%': val=Math.abs(c.y)<1e-12? NaN: c.x - c.y*Math.floor(c.x/c.y); break; case '^': val=(c.x===0 && c.y<=0)? NaN: Math.pow(c.x,c.y); break; case '||': val=(Number.isInteger(c.x)&&Number.isInteger(c.y)&& c.x>=0 && c.y>=0)? parseFloat(String(Math.trunc(c.x))+String(Math.trunc(c.y))):NaN; break; case '∑': val=sumSigma(c.x,c.y); break; }
             if(!isFinite(val)||isNaN(val)) continue; if(useIntegerMode && !isIntegerResult(val)) continue; if(Math.abs(val)>magnitudeSoft && speedAccuracy < 0.95) continue; const diff=Math.abs(val-target); opResults.push({val,diff,op:c.op, left:c.ex, right:c.ey}); }
           opResults.sort((a,b)=>a.diff-b.diff);
           for(let oi=0; oi<opResults.length && oi<opLimit; oi++){
@@ -406,7 +521,7 @@ function fast_runAnytime(numsInput, target, allowPartial=false){
     function signatureOf(arr){ return arr.slice().sort((a,b)=>a-b).map(x=>Math.round(x*1e6)/1e6).join('|')+'#'+arr.length; }
     function pushFrontier(type,item){ const sig=item.signature; if(largeN){ const prev=signatureBestDiff.get(sig); if(prev!=null && prev <= item.diff) return; signatureBestDiff.set(sig,item.diff); } const f=frontiers[type]; f.push(item); if(f.length>frontierCaps[type]) f.sort((a,b)=>a.diff-b.diff), f.length=frontierCaps[type]; }
     (function seedFrontiers(){ const baseExprs=nums.map(v=>({type:'num',value:v})); pushFrontier('value',{nums:nums.slice(), exprs:baseExprs, diff:Infinity, signature:signatureOf(nums), age:0}); })();
-    function expandState(state, limitPairs){ const arr=state.nums; const exprs=state.exprs; const nL=arr.length; if(nL<2) return []; const ENABLE = { '+': !!operatorFlags['+'], '-': !!operatorFlags['-'], '*': !!operatorFlags['*'], '/': !!operatorFlags['/'], '%': !!operatorFlags['%'], '^': !!operatorFlags['^'], '||': !!operatorFlags['||'], '∑': !!operatorFlags['∑'] }; const results=[]; for(let i=0;i<nL-1 && results.length<limitPairs;i++){ for(let j=i+1;j<nL && results.length<limitPairs;j++){ const a=arr[i], b=arr[j]; const ea=exprs[i], eb=exprs[j]; const restNums=[]; const restExprs=[]; for(let t=0;t<nL;t++){ if(t!==i && t!==j){ restNums.push(arr[t]); restExprs.push(exprs[t]); }} function add(op,x,y,EX,EY){ let val; switch(op){ case '+': val=x+y; break; case '-': val=x-y; break; case '*': val=x*y; break; case '/': val=Math.abs(y)<1e-12? NaN: x/y; break; case '%': val=Math.abs(y)<1e-12? NaN: x - y*Math.floor(x/y); break; case '^': val=(x===0&&y<=0)?NaN: Math.pow(x,y); break; case '||': val=(Number.isInteger(x)&&Number.isInteger(y)&& x>=0 && y>=0)? parseFloat(String(Math.trunc(x))+String(Math.trunc(y))):NaN; break; case '∑': val=(Number.isInteger(x)&&Number.isInteger(y)&& x<=y)? ((x+y)*(y-x+1)/2):NaN; break; default: val=NaN; } if(!isFinite(val)||isNaN(val)) return; if(useIntegerMode && !isIntegerResult(val)) return; const ast={type:'op',operator:op,left:EX,right:EY,value:val}; const newNums=restNums.concat([val]); const newExprs=restExprs.concat([ast]); const diff=Math.abs(val-target); results.push({nums:newNums, exprs:newExprs, diff, signature:signatureOf(newNums), age:0}); if(newNums.length===1){ if(updateBest(serializeAST(ast),val)) return; } }
+  function expandState(state, limitPairs){ const arr=state.nums; const exprs=state.exprs; const nL=arr.length; if(nL<2) return []; const ENABLE = { '+': !!operatorFlags['+'], '-': !!operatorFlags['-'], '*': !!operatorFlags['*'], '/': !!operatorFlags['/'], '%': !!operatorFlags['%'], '^': !!operatorFlags['^'], '||': !!operatorFlags['||'], '∑': !!operatorFlags['∑'] }; const results=[]; for(let i=0;i<nL-1 && results.length<limitPairs;i++){ for(let j=i+1;j<nL && results.length<limitPairs;j++){ const a=arr[i], b=arr[j]; const ea=exprs[i], eb=exprs[j]; const restNums=[]; const restExprs=[]; for(let t=0;t<nL;t++){ if(t!==i && t!==j){ restNums.push(arr[t]); restExprs.push(exprs[t]); }} function add(op,x,y,EX,EY){ let val; switch(op){ case '+': val=x+y; break; case '-': val=x-y; break; case '*': val=x*y; break; case '/': val=Math.abs(y)<1e-12? NaN: x/y; break; case '%': val=Math.abs(y)<1e-12? NaN: x - y*Math.floor(x/y); break; case '^': val=(x===0&&y<=0)?NaN: Math.pow(x,y); break; case '||': val=(Number.isInteger(x)&&Number.isInteger(y)&& x>=0 && y>=0)? parseFloat(String(Math.trunc(x))+String(Math.trunc(y))):NaN; break; case '∑': val=sumSigma(x,y); break; default: val=NaN; } if(!isFinite(val)||isNaN(val)) return; if(useIntegerMode && !isIntegerResult(val)) return; const ast={type:'op',operator:op,left:EX,right:EY,value:val}; const newNums=restNums.concat([val]); const newExprs=restExprs.concat([ast]); const diff=Math.abs(val-target); results.push({nums:newNums, exprs:newExprs, diff, signature:signatureOf(newNums), age:0}); if(newNums.length===1){ if(updateBest(serializeAST(ast),val)) return; } }
         add('+',a,b,ea,eb); add('-',a,b,ea,eb); add('-',b,a,eb,ea); add('*',a,b,ea,eb); add('/',a,b,ea,eb); add('/',b,a,eb,ea); if(ENABLE['%']){ add('%',a,b,ea,eb); add('%',b,a,eb,ea);} if(ENABLE['^']){ add('^',a,b,ea,eb); add('^',b,a,eb,ea);} if(ENABLE['||']){ add('||',a,b,ea,eb); add('||',b,a,eb,ea);} if(ENABLE['∑']){ add('∑',a,b,ea,eb); add('∑',b,a,eb,ea);} }
       }
       return results;
@@ -480,7 +595,11 @@ function fast_runAnytime(numsInput, target, allowPartial=false){
 }
 // -----------------------------------------------------------------------------
 
-self.onmessage = function(e){ const data=e.data; operatorFlags=data.operatorFlags; useIntegerMode=data.useIntegerMode; MAX_SQRT_DEPTH=data.MAX_SQRT_DEPTH; MAX_FACT_DEPTH=data.MAX_FACT_DEPTH; MAX_LOG_DEPTH=data.MAX_LOG_DEPTH||1; MAX_LN_DEPTH=data.MAX_LN_DEPTH||1; MAX_FACTORIAL_INPUT=data.MAX_FACTORIAL_INPUT; MAX_RESULTS=data.MAX_RESULTS||Infinity; if(typeof data.speedAccuracy==='number') speedAccuracy=Math.max(0,Math.min(1,data.speedAccuracy)); if(typeof data.timeBudgetMs==='number') externalTimeBudgetMs = Math.max(50, Math.min(20000, data.timeBudgetMs)); else externalTimeBudgetMs=null;
+self.onmessage = function(e){ const data=e.data; operatorFlags=data.operatorFlags; useIntegerMode=data.useIntegerMode; MAX_SQRT_DEPTH=data.MAX_SQRT_DEPTH; MAX_FACT_DEPTH=data.MAX_FACT_DEPTH; MAX_LOG_DEPTH=data.MAX_LOG_DEPTH||1; MAX_LN_DEPTH=data.MAX_LN_DEPTH||1; MAX_FACTORIAL_INPUT=data.MAX_FACTORIAL_INPUT; MAX_RESULTS=data.MAX_RESULTS||Infinity; if(typeof data.speedAccuracy==='number') speedAccuracy=Math.max(0,Math.min(1,data.speedAccuracy)); if(typeof data.timeBudgetMs==='number') externalTimeBudgetMs = Math.max(50, Math.min(20000, data.timeBudgetMs)); else externalTimeBudgetMs=null; sigmaFormula = data.sigmaFormula || 'i'; compileSigmaFormula(sigmaFormula);
+  // Update Sigma caps per request (optional overrides)
+  if(typeof data.sigmaHardCap === 'number') SIGMA_HARD_CAP = data.sigmaHardCap;
+  if(typeof data.sigmaRelMult === 'number') SIGMA_REL_MULT = data.sigmaRelMult;
+  CURRENT_TARGET_MAG = Math.abs(data.target || 1) || 1;
   if(data.type==='findFirstFast'){
     // New anytime orchestrator
     calculationCache.clear(); opResultCache.clear(); factorialCache.clear(); lastProgressPost=0;
@@ -514,6 +633,10 @@ self.onmessage = function(e){ const data=e.data; operatorFlags=data.operatorFlag
       self.postMessage({ results, closest: closestResult || null });
     } catch(err){ self.postMessage({ results, closest: closestResult || null, error: err.message }); }
   } else if(data.type==='analyzeRange'){
+    // For analyze mode, base Σ relative cap on the analyzed range
+    if(typeof data.minTarget === 'number' && typeof data.maxTarget === 'number'){
+      CURRENT_TARGET_MAG = Math.max(1, Math.abs(data.minTarget), Math.abs(data.maxTarget));
+    }
     // Analyze mode: aggregate integer results that fall within [minTarget..maxTarget]
     const { permutations, start, end, minTarget, maxTarget } = data;
     const valueMap = new Map(); // v -> Set(expressions)
