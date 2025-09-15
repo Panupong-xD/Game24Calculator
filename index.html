@@ -39,9 +39,9 @@
           </div>
           <div id="target-range-box" style="display:none; gap:8px; align-items:center;">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-              <input type="text" id="target-min" placeholder="ช่วงต่ำสุด (int)" class="easy-input" style="min-width:120px;" />
+              <input type="text" id="target-min" placeholder="ช่วงต่ำสุด" class="easy-input" style="min-width:120px;" />
               <span style="opacity:0.7;">ถึง</span>
-              <input type="text" id="target-max" placeholder="ช่วงสูงสุด (int)" class="easy-input" style="min-width:120px;" />
+              <input type="text" id="target-max" placeholder="ช่วงสูงสุด" class="easy-input" style="min-width:120px;" />
             </div>
           </div>
           <br />
@@ -873,12 +873,19 @@ function findAnalyzeRange(nums, minTarget, maxTarget){
 }
 
 function renderAnalysisResults(valueMap, minTarget, maxTarget, elapsed){
-  // build sorted list: by frequency desc, then value asc
-  const rows = Array.from(valueMap.entries()).map(([v,set])=>({ value:v, count:set.size, exprs:Array.from(set) }));
-  rows.sort((a,b)=> (b.count - a.count) || (a.value - b.value));
+  _lastAnalysisValueMap = valueMap; _lastAnalysisMin = minTarget; _lastAnalysisMax = maxTarget; _lastAnalysisElapsed = elapsed;
+  const baseRows = Array.from(valueMap.entries()).map(([v,set])=>({ value:v, count:set.size, exprs:Array.from(set) }));
+  const rows = sortAnalysisRows(baseRows, _analysisSortMode);
   const totalValues = rows.length;
   const totalExprs = rows.reduce((a,r)=>a+r.count,0);
-  const head = `<h2>สรุปผลช่วง ${minTarget} ถึง ${maxTarget}</h2>${renderElapsed(elapsed)}<div style="font-size:0.9rem; opacity:0.8; margin-bottom:8px;">พบค่า ${totalValues} ค่า • สูตรทั้งหมด ${totalExprs} แบบ</div>`;
+  const head = `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px;">
+      <div>
+        <h2 style="margin:0;">สรุปผลช่วง ${minTarget} ถึง ${maxTarget}</h2>
+        ${renderElapsed(elapsed)}
+        <div style="font-size:0.9rem; opacity:0.8;">พบค่า ${totalValues} ค่า • สูตรทั้งหมด ${totalExprs} แบบ</div>
+      </div>
+      <button id="analysis-sort-btn" class="toggle-btn" style="height:40px; min-width:150px;">เรียง: ${sortModeLabel(_analysisSortMode)}</button>
+    </div>`;
   const list = rows.map((r,idx)=>{
     const id = `val-${r.value}-${idx}`;
     const exprItems = r.exprs.map(ex=> `<li>${prettyPrintExpression(ex)}</li>`).join('');
@@ -898,6 +905,13 @@ function renderAnalysisResults(valueMap, minTarget, maxTarget, elapsed){
       const tid = h.getAttribute('data-target'); const el = document.getElementById(tid); if(!el) return; el.style.display = (el.style.display==='none'||!el.style.display) ? 'block' : 'none';
     });
   });
+  // wire sort cycle button
+  const sortBtn = document.getElementById('analysis-sort-btn');
+  if(sortBtn){
+    sortBtn.addEventListener('click', ()=>{
+      cycleAnalysisSort();
+    });
+  }
 }
 
 // --- Subset Mode (partial usage) ---
@@ -1328,6 +1342,52 @@ let _filterVisible = false; // default hidden
 // New: operator chip states (any | include | exclude)
 const _allFilterOps = ['+','-','*','/','%','^','√','!','∑','||','log','ln'];
 let _filterOpStates = Object.fromEntries(_allFilterOps.map(op=>[op,'any']));
+
+// --- Analyze Mode sorting state ---
+let _analysisSortMode = 'count-desc'; // 'count-desc' | 'count-asc' | 'value-desc' | 'value-asc'
+function sortAnalysisRows(rows, mode){
+  const arr = rows.slice();
+  switch(mode){
+    case 'count-asc':
+      arr.sort((a,b)=> (a.count - b.count) || (a.value - b.value));
+      break;
+    case 'value-desc':
+      arr.sort((a,b)=> (b.value - a.value) || (b.count - a.count));
+      break;
+    case 'value-asc':
+      arr.sort((a,b)=> (a.value - b.value) || (b.count - a.count));
+      break;
+    case 'count-desc':
+    default:
+      arr.sort((a,b)=> (b.count - a.count) || (a.value - b.value));
+      break;
+  }
+  return arr;
+}
+
+// Persist last analysis data to enable re-rendering when cycling sort
+let _lastAnalysisValueMap = null;
+let _lastAnalysisMin = 0;
+let _lastAnalysisMax = 0;
+let _lastAnalysisElapsed = '0.000';
+function sortModeLabel(mode){
+  switch(mode){
+    case 'count-asc': return 'สูตรน้อย→มาก';
+    case 'value-desc': return 'ตัวเลขมาก→น้อย';
+    case 'value-asc': return 'ตัวเลขน้อย→มาก';
+    case 'count-desc':
+    default: return 'สูตรมาก→น้อย';
+  }
+}
+function cycleAnalysisSort(){
+  const modes = ['count-desc','count-asc','value-desc','value-asc'];
+  let idx = modes.indexOf(_analysisSortMode);
+  if(idx < 0) idx = 0;
+  _analysisSortMode = modes[(idx+1) % modes.length];
+  if(_lastAnalysisValueMap){
+    renderAnalysisResults(_lastAnalysisValueMap, _lastAnalysisMin, _lastAnalysisMax, _lastAnalysisElapsed);
+  }
+}
 
 function normalizeOpToken(tok){
   const t = tok.toLowerCase();
