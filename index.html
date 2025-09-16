@@ -70,9 +70,24 @@
                 <button id="toggleConcatBtn" class="toggle-btn" onclick="toggleOperator('||')">เปิดการใช้ concat</button>
                 <button id="toggleSumBtn" class="toggle-btn" onclick="toggleOperator('∑')">เปิดการใช้ ∑</button>
                 <div id="sigma-formula-container" class="sigma-formula-container" style="display:none; margin-top:8px;">
-                  <label for="sigma-formula">สูตร f(i) สำหรับ ∑: </label>
-                  <input type="text" id="sigma-formula" class="sigma-formula-input" value="i" placeholder="เช่น i, i*i, i^2+1" onchange="updateSigmaFormula()" />
-                  <div style="font-size:0.8rem; opacity:0.75; margin-top:4px;">ใช้ตัวแปร i, ตัวเลข, วงเล็บ และเครื่องหมาย + - * / % ^ ได้</div>
+                  <div class="sigma-formula-row">
+                    <label for="sigma-formula" class="sigma-formula-label">สูตร f(i) สำหรับ ∑</label>
+                    <input
+                      type="text"
+                      id="sigma-formula"
+                      class="sigma-formula-input"
+                      value="i"
+                      placeholder="เช่น i, i*i, i^2+1"
+                      inputmode="text"
+                      autocapitalize="none"
+                      autocomplete="off"
+                      autocorrect="off"
+                      spellcheck="false"
+                      onchange="updateSigmaFormula()"
+                    />
+                  </div>
+                  <div id="sigma-toolbar" class="sigma-toolbar" aria-label="Sigma tokens toolbar"></div>
+                  <div class="sigma-hint">ใช้ตัวแปร i, ตัวเลข, วงเล็บ และเครื่องหมาย + − × ÷ % ^ ได้</div>
                 </div>
                 <br>
                 <button id="toggleSqrtBtn" class="toggle-btn" onclick="toggleOperator('√')">เปิดการใช้ √</button>
