@@ -122,6 +122,18 @@ body.light-theme::after { opacity: 0.18 !important; }
 body.light-theme .container::before,
 body.light-theme .container::after { opacity: .22 !important; }
 
+/* Calculation Path Visualization */
+.calc-path { margin-top:8px; padding:10px 12px 12px; background: var(--bg-secondary); border:1px solid var(--card-border); border-radius:12px; font-size:0.8rem; line-height:1.35; position:relative; animation: fadeIn 0.25s ease; }
+.calc-path-title { font-size:0.75rem; letter-spacing:0.5px; text-transform:uppercase; opacity:0.65; margin-bottom:4px; font-weight:600; }
+.calc-steps-list { margin-left:18px; padding-left:4px; }
+.calc-steps-list li { margin:2px 0; }
+.calc-tree-pre { margin:6px 0 0; padding:8px 10px; background: var(--bg-tertiary); border-radius:8px; font-family: monospace; font-size:0.7rem; overflow:auto; max-height:240px; }
+.path-btn { white-space:nowrap; }
+@keyframes fadeIn { from { opacity:0; transform: translateY(-2px);} to { opacity:1; transform:translateY(0);} }
+.calc-tree-wrapper { margin-top:6px; overflow:auto; max-width:100%; }
+.calc-tree-svg { width:100%; height:auto; display:block; }
+.calc-tree-svg .tree-node:hover rect { stroke: var(--accent-blue); stroke-width:1.8; }
+
 .nav-container {
   position: fixed;
   top: 20px;

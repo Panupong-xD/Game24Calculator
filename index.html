@@ -1625,6 +1625,8 @@ function displayResults(results, elapsedOverride) {
   _lastElapsed = elapsed;
   buildResultsContainer(results.length, elapsed);
   updateFilteredResultsList();
+  // Enhance with path buttons after initial render
+  setTimeout(enhanceResultsWithPathButtons, 0);
   } else if (window.closestResultOnCancel) {
   const target = parseNumberInput(document.getElementById("target").value);
     const EXACT_EPS = 1e-12;
@@ -1644,6 +1646,218 @@ function displayResults(results, elapsedOverride) {
   } else {
     document.getElementById("results").innerHTML = `<h2>ไม่พบคำตอบที่ใช้ตัวเลขทั้งหมด</h2>${renderElapsed(elapsed)}`;
   }
+}
+
+// ================= Calculation Path Visualization =================
+// Parse serialized expression (worker serializeAST format) -> AST
+function parseSerializedExpression(expr){
+  try {
+    const tokens = tokenizeExpr(expr);
+    let pos = 0;
+    function peek(){ return tokens[pos]; }
+    function consume(tok){ if(tok && tokens[pos] !== tok) throw new Error('expected '+tok+' got '+tokens[pos]); return tokens[pos++]; }
+    function isUnary(t){ return t==='√' || t==='log' || t==='ln'; }
+    function parsePrimary(){
+      let t = peek();
+      if(t==null) throw new Error('unexpected end');
+      if(isUnary(t)){
+        const op = consume(t);
+        // operand always serialized with parentheses root or expression directly after for our serializer
+        const child = parsePrimary();
+        return { type:'op', operator: op==='√'? '√': op, left:null, right: child };
+      }
+      if(t==='('){
+        consume('(');
+        let first = parsePrimary();
+        const binaryOps = new Set(['+','-','*','/','%','^','||','∑']);
+        const maybe = peek();
+        if(maybe && binaryOps.has(maybe)){
+          const op = consume(maybe);
+          const second = parsePrimary();
+          consume(')');
+          let node = { type:'op', operator: op, left:first, right:second };
+          while(peek()==='!'){ consume('!'); node = { type:'op', operator:'!', left:null, right: node }; }
+          return node;
+        } else {
+          consume(')');
+          let node = first;
+          while(peek()==='!'){ consume('!'); node = { type:'op', operator:'!', left:null, right: node }; }
+          return node;
+        }
+      }
+      if(t==='!') throw new Error('dangling !');
+      // number
+      if(/^[0-9.]+$/.test(t)){
+        consume(t);
+        let val = parseFloat(t);
+        return { type:'num', value: val };
+      }
+      throw new Error('unexpected token '+t);
+    }
+    const ast = parsePrimary();
+    if(pos !== tokens.length) throw new Error('extra tokens');
+    return ast;
+  } catch(err){
+    console.warn('parseSerializedExpression error', err, expr);
+    return null;
+  }
+}
+
+function tokenizeExpr(s){
+  const tokens=[]; let i=0; while(i<s.length){ const ch=s[i];
+    if(/\s/.test(ch)){ i++; continue; }
+  if(ch==='×'){ tokens.push('*'); i++; continue; }
+  if(ch==='÷'){ tokens.push('/'); i++; continue; }
+    if(ch==='('||ch===')'||ch==='!'||ch==='√'){ tokens.push(ch); i++; continue; }
+    if(ch==='|' && s[i+1]==='|'){ tokens.push('||'); i+=2; continue; }
+    if(ch==='∑'){ tokens.push('∑'); i++; continue; }
+    if(ch==='+'||ch==='-'||ch==='*'||ch==='/'||ch==='%'||ch==='^'){ tokens.push(ch); i++; continue; }
+    if(ch==='l'){ // log or ln
+      if(s.slice(i,i+3)==='log'){ tokens.push('log'); i+=3; continue; }
+      if(s.slice(i,i+2)==='ln'){ tokens.push('ln'); i+=2; continue; }
+    }
+    if(/[0-9.]/.test(ch)){
+      let j=i; while(j<s.length && /[0-9.]/.test(s[j])) j++;
+      tokens.push(s.slice(i,j)); i=j; continue; }
+    // ignore surrounding parentheses added by prettyPrint cleanup maybe
+    console.warn('unknown char in tokenize', ch, 'in', s);
+    i++;
+  }
+  return tokens;
+}
+
+function computeStepsAndValues(ast){
+  const steps=[];
+  function evalNode(n){
+    if(!n) return NaN;
+    if(n.type==='num') return n.value;
+    const op = n.operator;
+    if(op==='!'||op==='√'||op==='log'||op==='ln'){
+      const valChild = evalNode(n.right);
+      let result;
+      switch(op){
+        case '!': result = factorial(valChild); break;
+        case '√': result = valChild<0? NaN : Math.sqrt(valChild); break;
+        case 'log': result = valChild>0? Math.log10(valChild): NaN; break;
+        case 'ln': result = valChild>0? Math.log(valChild): NaN; break;
+      }
+      n.value = result;
+      steps.push({ type:'unary', op, a: valChild, r: result });
+      return result;
+    }
+    // binary
+    const lv = evalNode(n.left);
+    const rv = evalNode(n.right);
+    let r;
+    switch(op){
+      case '+': r=lv+rv; break;
+      case '-': r=lv-rv; break;
+      case '*': r=lv*rv; break;
+      case '/': r= Math.abs(rv)<1e-12? NaN: lv/rv; break;
+      case '%': r= Math.abs(rv)<1e-12? NaN: lv - rv*Math.floor(lv/rv); break;
+      case '^': r= (lv===0 && rv<=0)? NaN: Math.pow(lv,rv); break;
+      case '||': r = (Number.isInteger(lv)&&Number.isInteger(rv) && lv>=0 && rv>=0)? parseFloat(String(Math.trunc(lv))+String(Math.trunc(rv))) : NaN; break;
+      case '∑': {
+        if(Number.isInteger(lv) && Number.isInteger(rv) && lv<=rv){ const n=rv-lv+1; r=(lv+rv)*n/2; } else r=NaN; break; }
+      default: r=NaN;
+    }
+    n.value = r;
+    steps.push({ type:'binary', op, a: lv, b: rv, r });
+    return r;
+  }
+  const finalVal = evalNode(ast);
+  return { steps, final: finalVal };
+}
+
+function displayOperator(op){
+  switch(op){
+    case '*': return '×';
+    case '/': return '÷';
+    case '%': return 'mod';
+    default: return op;
+  }
+}
+
+function buildStepsHTML(steps){
+  let idx=1; return '<ol class="calc-steps-list">'+ steps.map(st=>{
+    if(st.type==='binary') return `<li>${idx++}) ${formatNumber(st.a)} ${displayOperator(st.op)} ${formatNumber(st.b)} = ${formatNumber(st.r)}</li>`;
+    else return `<li>${idx++}) ${displayOperator(st.op)}(${formatNumber(st.a)}) = ${formatNumber(st.r)}</li>`;
+  }).join('') + '</ol>';
+}
+
+function buildAsciiTree(ast){
+  return '';// legacy placeholder
+}
+
+function buildSvgTree(ast){
+  const nodes=[]; let id=0; function walk(n,d){ if(!n) return; nodes.push({id:id++, node:n, depth:d}); if(n.type==='op'){ if(n.operator==='!'||n.operator==='√'||n.operator==='log'||n.operator==='ln') walk(n.right,d+1); else { walk(n.left,d+1); walk(n.right,d+1);} } }
+  walk(ast,0);
+  const maxDepth = nodes.reduce((m,n)=>Math.max(m,n.depth),0);
+  const groups=[...Array(maxDepth+1)].map((_,d)=>nodes.filter(n=>n.depth===d));
+  const H=70,V=70,WNODE=60,HNODE=30,PAD=20; const maxNodes=Math.max(1,...groups.map(g=>g.length)); const width=Math.max(220, maxNodes*H + PAD*2); const height=(maxDepth+1)*V + PAD*2;
+  groups.forEach(g=>{ const cnt=g.length; if(!cnt) return; const total=(cnt-1)*H; const start=(width-total)/2; g.forEach((o,i)=>{ o.x=start + i*H; o.y= PAD + o.depth*V; }); });
+  const map=new Map(nodes.map(o=>[o.node,o])); const edges=[]; nodes.forEach(p=>{ if(p.node.type!=='op') return; if(p.node.operator==='!'||p.node.operator==='√'||p.node.operator==='log'||p.node.operator==='ln'){ const c=map.get(p.node.right); if(c) edges.push({a:p,b:c}); } else { const l=map.get(p.node.left); const r=map.get(p.node.right); if(l) edges.push({a:p,b:l}); if(r) edges.push({a:p,b:r}); } });
+  function label(o){ if(o.node.type==='num') return formatNumber(o.node.value); return displayOperator(o.node.operator); }
+  function sub(o){ if(o.node.type==='num') return ''; return formatNumber(o.node.value); }
+  let svg=`<svg class="calc-tree-svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg">`;
+  svg += '<g stroke="var(--text-secondary)" stroke-width="1.2" stroke-linecap="round">';
+  edges.forEach(e=>{ svg+=`<line x1="${e.a.x}" y1="${e.a.y+HNODE/2}" x2="${e.b.x}" y2="${e.b.y-HNODE/2}" />`; });
+  svg+='</g>';
+  nodes.forEach(o=>{ const x=o.x-WNODE/2, y=o.y-HNODE/2; svg+=`<g class="tree-node" transform="translate(${x},${y})">`;
+    svg+=`<rect rx="8" ry="8" width="${WNODE}" height="${HNODE}" fill="var(--bg-tertiary)" stroke="var(--card-border)" />`;
+    svg+=`<text x="${WNODE/2}" y="${HNODE/2 - (o.node.type==='op'?2:0)}" text-anchor="middle" dominant-baseline="middle" font-size="13" fill="var(--text-primary)" font-family="inherit">${label(o)}</text>`;
+    const s=sub(o); if(s) svg+=`<text x="${WNODE/2}" y="${HNODE-5}" text-anchor="middle" font-size="9" fill="var(--text-secondary)" font-family="inherit">${s}</text>`;
+    svg+='</g>'; });
+  svg+='</svg>';
+  return svg;
+}
+
+function enhanceResultsWithPathButtons(){
+  // Target result lists (#results-list or any results > ul under #results not analysis)
+  const lists = Array.from(document.querySelectorAll('#results-list, #results > ul'));
+  lists.forEach(ul=>{
+    if(ul && ul.classList.contains('analysis-body')) return;
+    Array.from(ul.querySelectorAll('li')).forEach(li=>{
+      if(li.dataset.hasPath==='1') return;
+      const textSpan = li.innerHTML;
+      // We need to locate the raw expression from _lastResults by matching pretty expression start
+      const match = textSpan.split('=')[0].trim();
+      // Find corresponding raw expression
+      let raw = null; if(Array.isArray(_lastResults)){
+        for(const r of _lastResults){ const pretty = prettyPrintExpression(r.expression); if(textSpan.includes(pretty+' =') || match===pretty){ raw = r.expression; break; } }
+      }
+      if(!raw) return; // skip if not found (analysis or other lists)
+      const btn = document.createElement('button');
+      btn.type='button'; btn.className='path-btn'; btn.textContent='ดูเส้นทาง'; btn.style.marginLeft='8px'; btn.style.padding='4px 10px'; btn.style.fontSize='0.75rem'; btn.style.background='var(--accent-purple)'; btn.style.boxShadow='0 2px 6px rgba(0,0,0,0.25)';
+      const container = document.createElement('div'); container.className='calc-path hidden'; container.style.display='none';
+      li.appendChild(btn); li.appendChild(container); li.dataset.rawExpression = raw; li.dataset.hasPath='1';
+    });
+  });
+}
+
+// Global click handler for path toggle
+document.addEventListener('click', (e)=>{
+  const btn = e.target.closest('.path-btn'); if(!btn) return;
+  const li = btn.closest('li'); if(!li) return; const box = li.querySelector('.calc-path'); if(!box) return;
+  if(box.dataset.loaded!=='1'){
+    const raw = li.dataset.rawExpression; const ast = parseSerializedExpression(raw);
+    if(!ast){ box.innerHTML='<div style="opacity:0.7;">ไม่สามารถแสดงเส้นทาง</div>'; box.style.display='block'; btn.textContent='ซ่อนเส้นทาง'; box.dataset.loaded='1'; return; }
+    const { steps } = computeStepsAndValues(ast);
+    const stepsHTML = buildStepsHTML(steps);
+  const svg = buildSvgTree(ast);
+  box.innerHTML = `<div class="calc-path-content"><div class="calc-steps"><div class="calc-path-title">การคำนวณทีละขั้น</div>${stepsHTML}</div><div class="calc-tree"><div class="calc-path-title" style="margin-top:6px;">แผนภูมิต้นไม้</div><div class="calc-tree-wrapper">${svg}</div></div></div>`;
+    box.dataset.loaded='1';
+  }
+  const showing = box.style.display !== 'none';
+  if(showing){ box.style.display='none'; btn.textContent='ดูเส้นทาง'; }
+  else { box.style.display='block'; btn.textContent='ซ่อนเส้นทาง'; }
+});
+
+// Observe #results for dynamic mode updates (fast / clean) and attach buttons automatically
+const __pathObserverTarget = document.getElementById('results');
+if(__pathObserverTarget){
+  const mo = new MutationObserver(()=>{ enhanceResultsWithPathButtons(); });
+  mo.observe(__pathObserverTarget, { childList:true, subtree:true });
 }
 
 // NEW helper to render elapsed time snippet at top
