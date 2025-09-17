@@ -36,12 +36,17 @@ function compileSigmaFormula(formula){
     if(!formula || typeof formula !== 'string') formula = 'i';
     const s = formula.trim();
     if(s === 'i') { sigmaRPN = ['i']; return; }
-    // Tokenize: numbers, i, ops + - * / % ^, parentheses
+    // Tokenize: numbers, i, ops + - * / % ^, sqrt(…), parentheses
     const tokens = [];
     let i = 0;
     while(i < s.length){
+      if(/\s/.test(s[i])){ i++; continue; }
+      if(s.slice(i,i+4) === 'sqrt'){
+        tokens.push('sqrt');
+        i += 4;
+        continue;
+      }
       const ch = s[i];
-      if(/\s/.test(ch)){ i++; continue; }
       if(ch === 'i'){ tokens.push('i'); i++; continue; }
       if(/[0-9.]/.test(ch)){
         let j=i; while(j<s.length && /[0-9.]/.test(s[j])) j++;
@@ -65,15 +70,22 @@ function compileSigmaFormula(formula){
       if(t==='i' || typeof t==='number'){ output.push(t); continue; }
       if(t==='('){ stack.push(t); continue; }
       if(t===')'){
-        while(stack.length && stack[stack.length-1] !== '('){ output.push(stack.pop()); }
+        while(stack.length && stack[stack.length-1] !== '('){
+          output.push(stack.pop());
+        }
         if(stack.length===0) throw new Error('mismatched paren');
-        stack.pop(); continue;
+        stack.pop();
+        // If function on top of stack, pop to output (only sqrt supported)
+        if(stack.length && stack[stack.length-1]==='sqrt') output.push(stack.pop());
+        continue;
+      }
+      if(t==='sqrt'){
+        stack.push(t); continue;
       }
       if(isOp(t)){
         // unary minus handling: if at start or after '(', treat as 0 - next
         const prev = tokens[k-1];
-        if(t==='-' && (k===0 || prev==='(' || isOp(prev))){
-          // inject 0
+        if(t==='-' && (k===0 || prev==='(' || isOp(prev) || prev==='sqrt')){
           output.push(0);
         }
         while(stack.length){
@@ -85,7 +97,11 @@ function compileSigmaFormula(formula){
       }
       throw new Error('unexpected token');
     }
-    while(stack.length){ const t=stack.pop(); if(t==='('||t===')') throw new Error('mismatched paren'); output.push(t); }
+    while(stack.length){
+      const t=stack.pop();
+      if(t==='('||t===')') throw new Error('mismatched paren');
+      output.push(t);
+    }
     sigmaRPN = output;
   } catch{ sigmaRPN = ['i']; }
 }
@@ -103,10 +119,18 @@ function evalSigmaAt(iVal){
       else if(t==='/'){ const b=st.pop(), a=st.pop(); if(Math.abs(b)<1e-12) return NaN; st.push(a/b); }
       else if(t==='%'){ const b=st.pop(), a=st.pop(); if(Math.abs(b)<1e-12) return NaN; st.push(a - b*Math.floor(a/b)); }
       else if(t==='^'){ const b=st.pop(), a=st.pop(); if(a===0 && b<=0) return NaN; st.push(Math.pow(a,b)); }
+      else if(t==='sqrt'){
+        const a=st.pop();
+        if(a<0) return NaN;
+        const v = Math.sqrt(a);
+        if(!Number.isFinite(v)) return NaN;
+        if(sigmaExceedsCap(v)) return NaN;
+        st.push(v);
+      }
       else return NaN;
     } else return NaN;
-  if(!Number.isFinite(st[st.length-1])) return NaN;
-  if(sigmaExceedsCap(st[st.length-1])) return NaN;
+    if(!Number.isFinite(st[st.length-1])) return NaN;
+    if(sigmaExceedsCap(st[st.length-1])) return NaN;
   }
   if(st.length!==1) return NaN;
   return st[0];
