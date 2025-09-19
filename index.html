@@ -147,6 +147,88 @@
     <!-- JavaScript -->
     <script src="wasm-math.js"></script>
     <script>
+// --- Fraction (Hybrid) Support (non-invasive) ---
+// Stores user-entered fractions for pretty display and post-process conversion only.
+// Does NOT change core evaluation math (still uses floats internally).
+(function(){
+  const fractionStore = new Map(); // originalString -> { n, d, value }
+  const FRACTION_TOKEN = /^(\s*[+-]?\d+\s*)\/(\s*[+-]?\d+\s*)$/;
+  function gcd(a,b){ a=Math.abs(a); b=Math.abs(b); while(b){ const t=a%b; a=b; b=t; } return a||1; }
+  function simplify(n,d){ if(d===0) return null; if(d<0){ n=-n; d=-d; } const g=gcd(n,d); return { n:n/g, d:d/g, value: n/d }; }
+  function parseFractionLiteral(str){ if(!str) return null; const m=str.match(FRACTION_TOKEN); if(!m) return null; let n=parseInt(m[1]); let d=parseInt(m[2]); if(!Number.isFinite(n)||!Number.isFinite(d)||d===0) return null; return simplify(n,d); }
+  // Hook parseNumberInput by wrapping original
+  if(!window.__originalParseNumberInput){
+    window.__originalParseNumberInput = parseNumberInput;
+    window.__fractionStore = fractionStore;
+    window.parseNumberInput = function(s){
+      if(typeof s === 'string'){
+        const fx = parseFractionLiteral(s);
+        if(fx){
+          const key = s.trim();
+            fractionStore.set(key, fx);
+            return fx.value; // internal still float
+        }
+      }
+      return window.__originalParseNumberInput(s);
+    };
+  }
+  // Try to recover fraction for a numeric value using original token table
+  function valueToFractionString(exprPart){
+    // exprPart may be raw number string in serialized expression.
+    if(typeof exprPart !== 'string') return null;
+    const trimmed = exprPart.trim();
+    if(fractionStore.has(trimmed)){
+      const f = fractionStore.get(trimmed); return f.d===1? `${f.n}` : `${f.n}/${f.d}`;
+    }
+    return null;
+  }
+  // Public helper to attempt formatting a number (float) to a known fraction entered by user
+  window.tryFormatKnownFraction = function(num){
+    // exact match from store (by value) when unique
+  let found=null; fractionStore.forEach(f=>{ if(Math.abs(f.value - num) < 1e-12){ if(!found) found=f; } });
+    if(found){ return found.d===1? `${found.n}` : `${found.n}/${found.d}`; }
+    return null;
+  };
+  // Lightweight float -> fraction approximation (continued fraction) for nicer output (bounded denominator)
+  window.approxFraction = function(x, maxDen=2000, eps=1e-10){
+    if(!Number.isFinite(x)) return null; let sign = x<0?-1:1; x=Math.abs(x);
+    if(Math.abs(x-Math.round(x))<eps) return { n:sign*Math.round(x), d:1 };
+    let h1=1,h0=0,k1=0,k0=1; let b=x; let iter=0;
+    while(iter<50){ const a=Math.floor(b); const h2=a*h1+h0; const k2=a*k1+k0; if(k2>maxDen) break; const val=h2/k2; if(Math.abs(val - x) < eps) return { n:sign*h2, d:k2 }; h0=h1; h1=h2; k0=k1; k1=k2; b=1/(b-a); if(!isFinite(b)) break; iter++; }
+    return null;
+  };
+  // Patch prettyPrintExpression to substitute leaf numbers if they correspond to entered fractions
+  if(!window.__originalPrettyPrintExpression){
+    window.__originalPrettyPrintExpression = prettyPrintExpression;
+    window.prettyPrintExpression = function(expr){
+      let s = window.__originalPrettyPrintExpression(expr);
+      // Replace standalone decimals with known entered fraction tokens (only if they appear exactly)
+      fractionStore.forEach(f=>{
+        const fracStr = f.d===1? `${f.n}` : `${f.n}/${f.d}`;
+        // If user typed "1/2" original serialized leaf likely "0.5"; attempt replacement on boundaries
+        const decimal = f.value.toString();
+        // Loose pattern: number boundaries (start, space, operator, parenthesis)
+        const pattern = new RegExp(`(?<![0-9A-Za-z_/])${decimal.replace(/[-/\\^$*+?.()|[\]{}]/g,'\\$&')}(?![0-9A-Za-z_/])`,'g');
+        s = s.replace(pattern, fracStr);
+      });
+      return s;
+    };
+  }
+  // Enhance displayNumber formatting without breaking existing formatNumber
+  if(!window.__originalFormatNumber){
+    window.__originalFormatNumber = formatNumber;
+    window.formatNumber = function(n){
+      const direct = window.tryFormatKnownFraction(n);
+      if(direct) return direct; // exact user-entered fraction
+      const approx = window.approxFraction(n, 200, 1e-10);
+      if(approx && approx.d>1 && Math.abs(approx.n/approx.d - n) < 1e-10){
+        return `${approx.n}/${approx.d}`; // show reduced form
+      }
+      return window.__originalFormatNumber(n);
+    };
+  }
+})();
+
 // Page Navigation (refactored to avoid reliance on global event)
 function showPage(pageId, sourceBtn=null) {
   // switch page visibility
@@ -769,6 +851,12 @@ function generateAllGroupings(nums, target) {
   return generateGroupingsHelper(0, nums.length - 1);
 }
 
+// Enhanced result validation to prevent mismatched targets
+function validateResultExact(result, target, tolerance = 1e-14) {
+  if (!Number.isFinite(result) || !Number.isFinite(target)) return false;
+  return Math.abs(result - target) <= tolerance;
+}
+
 // Flexible numeric formatting
 function formatNumber(n) {
   if (Number.isInteger(n)) return n.toString();
@@ -959,7 +1047,7 @@ function findSubsetSolutionsParallel(nums, target){
   let completed=0; let closest=null; let smallestDiff=Infinity; const EXACT_EPS=1e-12; let lastUI=0; const inProgress=new Map(); let results=[];
   document.getElementById('results').innerHTML=`<h2>โหมดย่อย: เริ่ม...</h2><p>0/${total}</p><button id="cancel-calc-btn" onclick="cancelCalculation=true; cancelAllWorkers();">ยกเลิก</button>`;
   function ui(force=false){ const now=performance.now(); if(!force && now-lastUI<120) return; lastUI=now; const pct=Math.round((completed/total)*100); let cTxt='ยังไม่พบ'; if(closest){ cTxt = (closest.diff<=EXACT_EPS? `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ตรงเป๊ะ)` : `${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)} (ห่าง ${formatNumber(closest.diff)})`); }
-    document.getElementById('results').innerHTML=`<h2>โหมดย่อย: ${pct}% (${completed}/${total})</h2><p>ดีที่สุด: ${cTxt}</p><button id=\"cancel-calc-btn\" onclick=\"cancelCalculation=true; cancelAllWorkers();\">ยกเลิก</button>`; }
+    document.getElementById('results').innerHTML=`<h2>โหมดย่อย: ${pct}% (${completed}/${total})</h2><p>ดีที่สุด: ${cTxt}</p><button id="cancel-calc-btn" onclick="cancelCalculation=true; cancelAllWorkers();">ยกเลิก</button>`; }
   function finish(){ const elapsed=((performance.now()-calcStartTime)/1000).toFixed(3); if(results.length){ displayResults(results, elapsed); } else if(closest){ const head = closest.diff<=EXACT_EPS ? 'พบคำตอบตรงเป๊ะ (ชุดย่อย)' : 'คำตอบใกล้สุด (ชุดย่อย)'; document.getElementById('results').innerHTML=`<h2>${head}</h2>${renderElapsed(elapsed)}<ul><li>${prettyPrintExpression(closest.expression)} = ${formatNumber(closest.result)}${closest.diff<=EXACT_EPS?'':' (ห่าง '+formatNumber(closest.diff)+')'}</li></ul>`; } else { document.getElementById('results').innerHTML=`<h2>ไม่พบคำตอบ</h2>${renderElapsed(elapsed)}`; } isCalculating=false; activeWorkers.forEach(w=>w.terminate()); activeWorkers=[]; }
   let next=0; function assign(worker){ if(next>=total) return; const start=next; const end=start+1; next=end; inProgress.set(worker,0); worker._start=start; worker._end=end; worker.postMessage({ type:'findAllSubsetsRange', permutations: subsets, start, end, target, operatorFlags, useIntegerMode, MAX_SQRT_DEPTH, MAX_FACT_DEPTH, MAX_LOG_DEPTH, MAX_LN_DEPTH, MAX_FACTORIAL_INPUT, MAX_RESULTS: Infinity, sigmaFormula: SIGMA_FORMULA }); }
   for(let w=0; w<numWorkers; w++){ const worker=new Worker('worker.js'); activeWorkers.push(worker); worker.onmessage=e=>{ if(cancelCalculation) return; const d=e.data; if(d.progress){ if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } ui(); return; } if(d.results){ for(const r of d.results){ results.push(r); } } if(d.closest && (!closest || d.closest.diff < closest.diff)){ closest=d.closest; } completed += (worker._end - worker._start); inProgress.delete(worker); ui(true); if(completed>=total && inProgress.size===0){ finish(); return; } assign(worker); }; worker.onerror=()=>{ completed += (worker._end - worker._start)||0; inProgress.delete(worker); if(completed>=total && inProgress.size===0) finish(); else assign(worker); }; assign(worker); }
@@ -1573,23 +1661,44 @@ function updateFilteredResultsList(){
     if(st==='include') includeOps.add(op);
     else if(st==='exclude') excludeOps.add(op);
   }
+  
   const filtered = _lastResults.filter(r => {
     const expr = r.expression || '';
+    
+    // Apply operator filtering only (target filtering already done in displayResults)
     for(const op of includeOps){ if(!exprHasOperator(expr, op)) return false; }
     for(const op of excludeOps){ if(exprHasOperator(expr, op)) return false; }
+    
     return true;
   });
+  
   const listEl = document.getElementById('results-list');
   const countEl = document.getElementById('filtered-count');
   if(countEl) countEl.textContent = String(filtered.length);
   if(listEl){
-    listEl.innerHTML = filtered.map(res => `<li>${prettyPrintExpression(res.expression)} = ${formatNumber(res.result)}</li>`).join('');
+    listEl.innerHTML = filtered.map(res => {
+      return `<li>${prettyPrintExpression(res.expression)} = ${formatNumber(res.result)}</li>`;
+    }).join('');
   }
 }
 
 function displayResults(results, elapsedOverride) {
   const elapsed = elapsedOverride || ((performance.now()-calcStartTime)/1000).toFixed(3);
   if (results.length > 0) {
+    // Filter results to ensure they actually match the target with tighter tolerance
+    const target = parseNumberInput(document.getElementById("target").value);
+    if (Number.isFinite(target)) {
+      results = results.filter(res => {
+        // Force recalculation to verify accuracy instead of trusting stored results
+        const ast = parseSerializedExpression(res.expression);
+        if (ast) {
+          const recalculated = evaluateAST(ast);
+          return validateResultExact(recalculated, target);
+        }
+        return false;
+      });
+    }
+    
     if(useCleanMode){
       function computeCleanScore(expr){
         const protectedExpr = expr.replace(/\|\|/g,'§').replace(/log(?=\()/g,'Ł').replace(/ln(?=\()/g,'ŀ');
@@ -1623,7 +1732,22 @@ function displayResults(results, elapsedOverride) {
   // Save and render with dynamic filtering UI
   _lastResults = results.slice();
   _lastElapsed = elapsed;
-  buildResultsContainer(results.length, elapsed);
+  
+  // Pre-filter _lastResults to remove invalid ones permanently
+  const targetForFilter = parseNumberInput(document.getElementById("target").value);
+  if (Number.isFinite(targetForFilter)) {
+    _lastResults = _lastResults.filter(res => {
+      // Force recalculation to verify accuracy instead of trusting stored results
+      const ast = parseSerializedExpression(res.expression);
+      if (ast) {
+        const recalculated = evaluateAST(ast);
+        return validateResultExact(recalculated, targetForFilter);
+      }
+      return false;
+    });
+  }
+  
+  buildResultsContainer(_lastResults.length, elapsed);
   updateFilteredResultsList();
   // Enhance with path buttons after initial render
   setTimeout(enhanceResultsWithPathButtons, 0);
@@ -1766,6 +1890,18 @@ function computeStepsAndValues(ast){
     return r;
   }
   const finalVal = evalNode(ast);
+  
+  // Validate path result matches expected target for consistency
+  const targetInput = document.getElementById("target");
+  if (targetInput) {
+    const target = parseNumberInput(targetInput.value);
+    if (Number.isFinite(target) && !validateResultExact(finalVal, target)) {
+      console.warn('Path calculation mismatch:', finalVal, 'vs target:', target);
+      // Still return steps but mark as inconsistent
+      return { steps, final: finalVal, inconsistent: true };
+    }
+  }
+  
   return { steps, final: finalVal };
 }
 
@@ -1876,10 +2012,18 @@ document.addEventListener('click', (e)=>{
   if(box.dataset.loaded!=='1'){
     const raw = li.dataset.rawExpression; const ast = parseSerializedExpression(raw);
     if(!ast){ box.innerHTML='<div style="opacity:0.7;">ไม่สามารถแสดงเส้นทาง</div>'; box.style.display='block'; btn.textContent='ซ่อนเส้นทาง'; box.dataset.loaded='1'; return; }
-    const { steps } = computeStepsAndValues(ast);
+    
+    const pathData = computeStepsAndValues(ast);
+    const { steps, inconsistent } = pathData;
     const stepsHTML = buildStepsHTML(steps);
-  const svg = buildSvgTree(ast);
-  box.innerHTML = `<div class="calc-path-content"><div class="calc-steps"><div class="calc-path-title">การคำนวณทีละขั้น</div>${stepsHTML}</div><div class="calc-tree"><div class="calc-path-title" style="margin-top:6px;">แผนภูมิต้นไม้</div><div class="calc-tree-wrapper">${svg}</div></div></div>`;
+    const svg = buildSvgTree(ast);
+    
+    let warningHTML = '';
+    if (inconsistent) {
+      warningHTML = '<div style="color: var(--accent-red); font-size: 0.9rem; margin-bottom: 8px; padding: 6px; background: var(--bg-tertiary); border-radius: 6px;">⚠️ การคำนวณซ้ำไม่ตรงกับเป้าหมาย - อาจมีความคลาดเคลื่อนเล็กน้อย</div>';
+    }
+    
+    box.innerHTML = `<div class="calc-path-content">${warningHTML}<div class="calc-steps"><div class="calc-path-title">การคำนวณทีละขั้น</div>${stepsHTML}</div><div class="calc-tree"><div class="calc-path-title" style="margin-top:6px;">แผนภูมิต้นไม้</div><div class="calc-tree-wrapper">${svg}</div></div></div>`;
     box.dataset.loaded='1';
   }
   const showing = box.style.display !== 'none';
