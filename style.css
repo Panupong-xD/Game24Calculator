@@ -1325,3 +1325,193 @@ body.dark-theme #fast-accuracy-slider.glass-press::-webkit-slider-thumb, body.da
 .nav-blob.no-anim {
   transition: none !important;
 }
+
+
+/* ================= Mahiru Special Theme ================= */
+body.mahiru-theme {
+  /* Warm ivory/peach/gold palette inspired by Mahiru */
+  --bg-primary: #fffaf2;
+  --bg-secondary: #fff3e6;
+  --bg-tertiary: #ffe9d6;
+  --text-primary: #3d2f2a;
+  --text-secondary: #7a6d66;
+  --accent-blue: #f6a26b;    /* peach primary accent */
+  --accent-green: #f7c97a;   /* champagne gold */
+  --accent-red: #e38f8f;
+  --accent-orange: #f6b684;
+  --accent-purple: #e7b5d5;
+  --shadow-color: rgba(246, 162, 107, 0.25);
+  --card-bg: rgba(255, 255, 255, 0.72);
+  --card-border: rgba(246, 162, 107, 0.18);
+  background: radial-gradient(1200px 800px at 20% 0%, #fff2e2 0%, #fffaf2 45%, #ffffff 100%);
+  color: var(--text-primary);
+}
+
+/* Soft glitter overlay */
+body.mahiru-theme::before,
+body.mahiru-theme::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+body.mahiru-theme::before {
+  /* soft peach & gold glow */
+  background: radial-gradient(600px 300px at 10% -5%, rgba(246, 162, 107, 0.30), transparent 60%),
+              radial-gradient(700px 350px at 90% 0%, rgba(247, 201, 122, 0.28), transparent 60%);
+}
+body.mahiru-theme::after {
+  /* soft gold star twinkles */
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(255,255,255,0.75) 0 1px, transparent 2px),
+    radial-gradient(circle at 80% 20%, rgba(247,201,122,0.8) 0 1px, transparent 2px),
+    radial-gradient(circle at 60% 70%, rgba(255,255,255,0.75) 0 1px, transparent 2px),
+    radial-gradient(circle at 35% 75%, rgba(247,201,122,0.8) 0 1px, transparent 2px),
+    radial-gradient(circle at 50% 40%, rgba(255,255,255,0.75) 0 1px, transparent 2px);
+  background-size: 1400px 800px;
+  animation: mahiru-twinkle 9s linear infinite;
+  opacity: .65;
+}
+@keyframes mahiru-twinkle {
+  0%   { transform: translateY(0); opacity:.6; }
+  50%  { transform: translateY(6px); opacity: .85; }
+  100% { transform: translateY(0); opacity:.6; }
+}
+
+/* Elevate containers above overlay */
+/* Keep nav fixed and layered as original; only raise content layers above overlays */
+body.mahiru-theme .main-container,
+body.mahiru-theme .container { position: relative; z-index: 1; }
+
+/* Nav + blob accents */
+body.mahiru-theme .nav-container { backdrop-filter: saturate(180%) blur(18px); border-color: rgba(246,162,107,0.25); }
+body.mahiru-theme .nav-blob {
+  background: linear-gradient(135deg, #f6a26b 0%, #ff9ec7 60%, #f7c97a 100%);
+  box-shadow: 0 6px 26px rgba(246, 162, 107, 0.35);
+}
+/* Do not change nav positioning or vertical offset in Mahiru theme */
+body.mahiru-theme .nav-container { position: fixed; top: 20px; }
+
+/* Buttons: soft gradient and glow */
+body.mahiru-theme button {
+  background: linear-gradient(135deg, #f6a26b 0%, #ff9ec7 60%, #f7c97a 100%);
+  color: #473935;
+  box-shadow: 0 6px 22px rgba(246, 162, 107, 0.35);
+}
+body.mahiru-theme button:hover { transform: translateY(-2px) scale(1.01); }
+body.mahiru-theme button:active { transform: translateY(0) scale(0.99); }
+
+/* Cards and lists */
+body.mahiru-theme .container,
+body.mahiru-theme #results,
+body.mahiru-theme .option-group {
+  background: rgba(255,255,255,0.78);
+  border-color: rgba(246,162,107,0.20);
+  box-shadow: 0 10px 40px rgba(246, 162, 107, 0.25);
+}
+
+/* Inputs */
+body.mahiru-theme .easy-input,
+body.mahiru-theme .num,
+body.mahiru-theme .sqrt-depth-input,
+body.mahiru-theme .fact-depth-input,
+body.mahiru-theme .log-depth-input {
+  background: rgba(255, 242, 230, 0.85);
+}
+body.mahiru-theme .easy-input:focus,
+body.mahiru-theme .num:focus {
+  box-shadow: 0 0 0 2px #f6a26b, 0 6px 16px rgba(246, 162, 107, 0.35);
+}
+
+/* Chips / toggle buttons */
+body.mahiru-theme .toggle-btn.active,
+body.mahiru-theme .mode-btn.active-mode {
+  background: linear-gradient(135deg, #f6a26b 0%, #ff9ec7 60%, #f7c97a 100%);
+  color: #473935;
+}
+
+/* Mahiru theme: very light OFF state for operator toggles */
+body.mahiru-theme .operator-buttons button.toggle-btn {
+  background: rgba(255, 250, 242, 0.65);
+  color: rgba(61, 47, 42, 0.62);
+  border-color: rgba(246, 162, 107, 0.18);
+  box-shadow: 0 2px 10px rgba(246, 162, 107, 0.12);
+}
+body.mahiru-theme .operator-buttons button.toggle-btn:hover {
+  background: rgba(255, 250, 242, 0.78);
+}
+
+/* Mahiru theme: very light OFF state for mode buttons */
+body.mahiru-theme .mode-btn {
+  background: rgba(255, 250, 242, 0.65) !important;
+  color: rgba(61, 47, 42, 0.72) !important;
+  border-color: rgba(246, 162, 107, 0.18) !important;
+  box-shadow: 0 2px 10px rgba(246, 162, 107, 0.12) !important;
+}
+body.mahiru-theme .mode-btn:hover { background: rgba(255, 250, 242, 0.78) !important; }
+
+/* Results list items animation subtle */
+body.mahiru-theme #results li { animation: fadeIn 0.35s ease; }
+
+/* Mahiru motifs */
+body.mahiru-theme h1 { position: relative; }
+body.mahiru-theme h1::after {
+  /* soft halo ring */
+  content: "";
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 160px; height: 160px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(247,201,122,0.0) 0 10%, rgba(247,201,122,0.35) 25%, rgba(246,162,107,0.35) 40%, rgba(247,201,122,0.0) 60%);
+  filter: blur(10px);
+  z-index: -1;
+}
+
+/* Feather-like corner ornaments on main cards */
+body.mahiru-theme .container::before,
+body.mahiru-theme .container::after {
+  content: "";
+  position: absolute;
+  width: 80px; height: 80px;
+  pointer-events: none;
+  opacity: 0.35;
+  background:
+    radial-gradient(60% 40% at 30% 60%, rgba(247,201,122,0.6) 0%, rgba(247,201,122,0.0) 70%),
+    radial-gradient(50% 30% at 60% 40%, rgba(246,162,107,0.5) 0%, rgba(246,162,107,0.0) 70%);
+  filter: blur(0.2px);
+}
+body.mahiru-theme .container::before { top: 6px; left: 6px; transform: rotate(-18deg); }
+body.mahiru-theme .container::after { bottom: 6px; right: 6px; transform: rotate(162deg); }
+
+/* Mahiru: make operator ON state more colorful (peach + pink + gold) */
+body.mahiru-theme .operator-buttons button.toggle-btn.active {
+  background-image: linear-gradient(120deg, #f6a26b 0%, #ff9ec7 65%, #f7c97a 100%);
+  color: #3b2b35;
+  border-color: rgba(246, 162, 107, 0.28);
+  box-shadow: 0 10px 22px -8px rgba(255, 158, 199, 0.55), 0 0 0 1px rgba(246,162,107,0.25) inset;
+}
+
+/* Mahiru theme: replace rainbow title with peach→gold gradient */
+body.mahiru-theme h1 {
+  background: linear-gradient(90deg, #f6a26b 0%, #ff9ec7 55%, #f7c97a 100%);
+  background-size: 100% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: none;
+}
+
+/* Deepest faint background image layer */
+html::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background: url('background.jpg') center center / cover no-repeat fixed;
+  opacity: 0.12; /* subtle */
+  z-index: -3;
+  pointer-events: none;
+  filter: saturate(105%) contrast(95%) brightness(105%);
+}

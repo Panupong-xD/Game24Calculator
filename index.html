@@ -140,6 +140,13 @@
             </div>
             
           </div>
+          <!-- Separate Theme Section -->
+          <div class="option-group" style="margin-top:14px;">
+            <h3>ธีม</h3>
+            <div class="theme-options">
+              <button id="toggleMahiruThemeBtn" onclick="toggleMahiruTheme()" class="toggle-btn">เปิดธีม Mahiru ✨</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -282,6 +289,35 @@ function toggleTheme() {
   // ensure blob still aligned after theme transition
   setTimeout(updateNavBlob, 300);
 }
+
+// ===== Mahiru Theme: non-invasive toggle with persistence =====
+function applyMahiruButtonState(){
+  const btn = document.getElementById('toggleMahiruThemeBtn');
+  if(!btn) return;
+  if(document.body.classList.contains('mahiru-theme')){
+    btn.textContent = 'ปิดธีม Mahiru ✨';
+    btn.classList.add('active-mode');
+  } else {
+    btn.textContent = 'เปิดธีม Mahiru ✨';
+    btn.classList.remove('active-mode');
+  }
+}
+function toggleMahiruTheme(){
+  document.body.classList.toggle('mahiru-theme');
+  const on = document.body.classList.contains('mahiru-theme');
+  try { localStorage.setItem('useMahiruTheme', on ? '1':'0'); } catch {}
+  applyMahiruButtonState();
+  setTimeout(updateNavBlob, 100);
+}
+// Load persisted choice
+(function(){
+  try {
+    const saved = localStorage.getItem('useMahiruTheme');
+    if(saved === '1') document.body.classList.add('mahiru-theme');
+  } catch {}
+  // initialize button label
+  window.addEventListener('load', applyMahiruButtonState);
+})();
 
 function displayOperatorLabel(op){
   if(op==='*') return '×';
