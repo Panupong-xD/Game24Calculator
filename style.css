@@ -1534,5 +1534,6 @@ body.mahiru-theme .mode-btn.active-mode {
 /* Calculate row with right-aligned icon */
 .calc-action-row { display:flex; align-items:center; gap:12px; justify-content:space-between; }
 .calc-action-row .calc-btn { margin-top: 24px; }
-.calc-side-icon { height: 130px; width: 130px; object-fit: contain; opacity:.9; }
+.calc-side-icon { display:none; height: 130px; width: 130px; object-fit: contain; opacity:.9; }
 .calc-side-icon:hover { transform: scale(1.05); }
+body.mahiru-theme .calc-side-icon { display:block; }
