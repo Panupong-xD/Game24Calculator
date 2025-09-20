@@ -1515,3 +1515,24 @@ html::before {
   pointer-events: none;
   filter: saturate(105%) contrast(95%) brightness(105%);
 }
+
+/* Mahiru: unify mode button ON colors to pink-gold like operators */
+body.mahiru-theme #toggleFastModeBtn.active-mode,
+body.mahiru-theme #toggleIntegerModeBtn.active-mode,
+body.mahiru-theme #toggleCleanModeBtn.active-mode,
+body.mahiru-theme #toggleSubsetModeBtn.active-mode,
+body.mahiru-theme #toggleAnalyzeModeBtn.active-mode,
+body.mahiru-theme .mode-btn.active-mode {
+  background-image: linear-gradient(120deg, #f6a26b 0%, #ff9ec7 65%, #f7c97a 100%) !important;
+  color: #3b2b35 !important;
+  border-color: rgba(246, 162, 107, 0.28) !important;
+  box-shadow: 0 10px 22px -8px rgba(255, 158, 199, 0.55), 0 0 0 1px rgba(246,162,107,0.25) inset !important;
+  filter: none !important;
+}
+
+
+/* Calculate row with right-aligned icon */
+.calc-action-row { display:flex; align-items:center; gap:12px; justify-content:space-between; }
+.calc-action-row .calc-btn { margin-top: 24px; }
+.calc-side-icon { height: 130px; width: 130px; object-fit: contain; opacity:.9; }
+.calc-side-icon:hover { transform: scale(1.05); }
