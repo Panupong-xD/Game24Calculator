@@ -478,6 +478,8 @@ button:active {
   gap: 20px;
 }
 
+.mode-buttons { display:flex; flex-direction:column; gap:10px; }
+
 .option-group {
   background: var(--bg-secondary);
   padding: 20px;
